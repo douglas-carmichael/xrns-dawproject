@@ -60,12 +60,23 @@ public enum Verify {
         var curInst = [Int](repeating: -1, count: m.channels)
         var div: [(pat: Int, row: Int, ch: Int, mine: Int, lib: Int, myNote: Int, libNote: Int)] = []
         var envCells = 0    // active cells on enveloped instruments — volume is envelope-driven, not model-checkable
+        var gv = 64, gvSlide = 0, gvCells = 0   // global volume (0…64) and cells it explains
         for f in frames where f.pattern >= 0 && f.pattern < m.patterns.count {
             let pat = m.patterns[f.pattern]
             guard f.row < pat.count else { continue }
+            // Global volume (XM Gxx/Hxy → 0x10 set / 0x11 slide) scales EVERY channel.
+            // The converter doesn't emit it — Renoise's own importer drops it too — so
+            // its effect is isolated below as a known gap, not counted as a volume bug.
+            if gvSlide != 0 { gv = max(0, min(64, gv + gvSlide)); gvSlide = 0 }   // a prior row's slide lands now
+            for c in pat[f.row] {
+                for (t, pr) in [(c.fx1Type, c.fx1Param), (c.fx2Type, c.fx2Param)] {
+                    if t == 0x10 { gv = min(64, pr) }                                    // set global volume
+                    else if t == 0x11 { let up = pr >> 4, dn = pr & 0x0F                 // global volume slide (defer like channel slides)
+                        if up > 0 { gvSlide = up * speed } else if dn > 0 { gvSlide = -dn * speed } }
+                }
+            }
             for ch in 0..<m.channels where ch < pat[f.row].count {
                 let cell = pat[f.row][ch]
-                let glide = (cell.fx1Type == 0x03 || cell.fx1Type == 0x05)   // Gxx / Lxy: slide to note, no retrigger
                 if let i = cell.instrument { curInst[ch] = i - 1 }           // libxmp ev.ins is 1-based
                 let ins = curInst[ch], valid = ins >= 0 && ins < m.instruments.count
                 let enveloped = valid && m.instruments[ins].envelope != nil
@@ -83,9 +94,17 @@ public enum Verify {
                 else if cell.note != nil {
                     let wasActive = active[ch]
                     active[ch] = true
+                    // A bare note (no sample #) keeps the running volume only on MOD
+                    // (ProTracker quirk); XM/S3M/IT reset to the sample default on any note.
+                    // A note resets the volume to the sample default unless the volume
+                    // column overrides it. Two keep-the-running-volume exceptions, both
+                    // verified against libxmp: a tone-porta note continuing a sounding
+                    // note (S3M/IT/MOD — but XM resets on every note), and a MOD bare
+                    // note with no sample number (ProTracker quirk).
+                    let protrackerKeep = m.format == "MOD" && cell.instrument == nil && wasActive
+                    let portaKeep = (cell.fx1Type == 0x03 || cell.fx1Type == 0x05) && wasActive && m.format != "XM"
                     if let v = cell.volume { cur[ch] = v - 1 }
-                    else if glide { /* slide to note: keep running volume */ }
-                    else if cell.instrument != nil || !wasActive { cur[ch] = sdef }   // a sample # (or first hit) resets to default; a bare note keeps the running volume
+                    else if !(portaKeep || protrackerKeep) { cur[ch] = sdef }
                 } else if cell.instrument != nil { if active[ch] { cur[ch] = sdef } }  // instrument-only row resets volume
                 else if let v = cell.volume { cur[ch] = v - 1 }
                 if cell.fx1Type == 0x0C { active[ch] = true; cur[ch] = min(64, cell.fx1Param) }   // Cxx set volume
@@ -112,7 +131,9 @@ public enum Verify {
                 if lib >= 6 {
                     if enveloped { envCells += 1 }      // envelope drives the level (exported to Renoise as-is); model can't check
                     else if abs(mine - lib) > threshold {
-                        div.append((f.pattern, f.row, ch, mine, lib, cell.note ?? -1, ch < f.note.count ? f.note[ch] : -1))
+                        let mineGv = Int((Double(mine) * Double(gv) / 64.0).rounded())
+                        if gv < 64 && abs(mineGv - lib) <= threshold { gvCells += 1 }   // explained by global volume (not emitted — Renoise-importer parity)
+                        else { div.append((f.pattern, f.row, ch, mine, lib, cell.note ?? -1, ch < f.note.count ? f.note[ch] : -1)) }
                     }
                 }
                 if regSlide != 0 { cur[ch] = max(0, min(64, cur[ch] + regSlide)) }   // takes effect from the next row
@@ -123,6 +144,7 @@ public enum Verify {
         let checked = cells - envCells
         print("  volume divergences > \(threshold)/64: \(div.count) of \(checked) checked cells (\(checked > 0 ? div.count * 100 / checked : 0)%)")
         if envCells > 0 { print("    (\(envCells) enveloped-instrument cells skipped — level is envelope-driven and exported to Renoise unchanged)") }
+        if gvCells > 0 { print("    (\(gvCells) cells explained by global volume — not emitted, matching Renoise's own importer)") }
         let byPat = Dictionary(grouping: div, by: { $0.pat }).mapValues { $0.count }.sorted { $0.value > $1.value }
         for (pat, cnt) in byPat.prefix(12) { print("    pattern \(pat): \(cnt) divergent cells") }
         print("  worst cells (mine vs libxmp):")
