@@ -56,17 +56,23 @@ operating systems (see `.github/workflows/ci.yml`); tagging a commit
 xrnsdaw <input> [options]
 
 Options:
-  -o, --output <path>   Output file (its extension can set the target format)
-      --to <format>     Target format: "xrns", "dawproject" or "midi"
-      --lpb <n>         Lines-per-beat grid when target is .xrns (default: derived from tempo)
+  -o, --output <path>   Output file, or output folder for a Polyend target
+      --to <format>     Target: "xrns", "dawproject", "midi" or "polyend"
+      --lpb <n>         Lines/steps-per-beat grid for .xrns or Polyend targets
       --layout <mode>   Legacy-module track layout: "channel" or "instrument" (see below).
-                        Default: channel for .xrns, instrument for .dawproject/.mid
+                        Default: channel for .xrns/.polyend, instrument for .dawproject/.mid
   -v, --verbose         Print a conversion summary
   -h, --help            Show help
 ```
 
-The source format is taken from the input extension; the target is `--to`, else
-the `-o` extension, else a default (xrns/midi → dawproject, dawproject → xrns):
+The source format is taken from the input extension; a folder (or project.mt) is a
+Polyend Tracker project, and any other non-round-trip extension is treated as a
+tracker module identified by content. The target is --to, else the -o extension,
+else: xrns/midi/module/polyend → dawproject (polyend/dawproject → xrns).
+
+A Polyend Tracker project is a folder (project.mt + patterns/ + instruments/ +
+samples/). Export quantises to the step grid and is monophonic per track; stereo
+samples are preserved (embedded as WAV in .xrns).
 
 ```sh
 xrnsdaw "My Song.xrns"                 # → "My Song.dawproject"
