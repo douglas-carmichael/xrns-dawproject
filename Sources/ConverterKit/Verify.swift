@@ -126,17 +126,13 @@ public enum Verify {
                 else if cell.note != nil {
                     let wasActive = active[ch]
                     active[ch] = true
-                    // A bare note (no sample #) keeps the running volume only on MOD
-                    // (ProTracker quirk); XM/S3M/IT reset to the sample default on any note.
-                    // A note resets the volume to the sample default unless the volume
-                    // column overrides it. Two keep-the-running-volume exceptions, both
-                    // verified against libxmp: a tone-porta note continuing a sounding
-                    // note (S3M/IT/MOD — but XM resets on every note), and a MOD bare
-                    // note with no sample number (ProTracker quirk).
-                    let protrackerKeep = m.format == "MOD" && cell.instrument == nil && wasActive
-                    let portaKeep = (cell.fx1Type == 0x03 || cell.fx1Type == 0x05) && wasActive && m.format != "XM"
+                    // A note with no sample number leaves the running volume unchanged
+                    // (standard tracker behaviour, tone-porta notes included); a sample
+                    // number resets the volume to that sample's default. The volume
+                    // column, when present, always wins.
+                    let keepVol = cell.instrument == nil && wasActive
                     if let v = cell.volume { cur[ch] = v - 1 }
-                    else if !(portaKeep || protrackerKeep) { cur[ch] = sdef }
+                    else if !keepVol { cur[ch] = sdef }
                 } else if cell.instrument != nil { if active[ch] { cur[ch] = sdef } }  // instrument-only row resets volume
                 else if let v = cell.volume { cur[ch] = v - 1 }
                 if cell.fx1Type == 0x0C { active[ch] = true; cur[ch] = min(64, cell.fx1Param) }   // Cxx set volume
