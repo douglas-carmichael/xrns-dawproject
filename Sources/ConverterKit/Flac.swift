@@ -109,15 +109,33 @@ enum Flac {
     }
 
     /// Residuals of the FIXED predictor of the given order (samples order..<count).
+    /// The arithmetic is split into named sub-terms — the one-line polynomial form
+    /// trips Swift's "expression too complex to type-check in reasonable time".
     private static func fixedResidual(_ x: [Int], order: Int) -> [Int] {
         let n = x.count
-        switch order {
-        case 0: return x
-        case 1: return (1..<n).map { x[$0] - x[$0 - 1] }
-        case 2: return (2..<n).map { x[$0] - 2 * x[$0 - 1] + x[$0 - 2] }
-        case 3: return (3..<n).map { x[$0] - 3 * x[$0 - 1] + 3 * x[$0 - 2] - x[$0 - 3] }
-        default: return (4..<n).map { x[$0] - 4 * x[$0 - 1] + 6 * x[$0 - 2] - 4 * x[$0 - 3] + x[$0 - 4] }
+        if order == 0 { return x }
+        var out = [Int]()
+        out.reserveCapacity(max(0, n - order))
+        for i in order..<n {
+            let r: Int
+            switch order {
+            case 1:
+                r = x[i] - x[i - 1]
+            case 2:
+                r = x[i] - 2 * x[i - 1] + x[i - 2]
+            case 3:
+                let outer = x[i] - x[i - 3]
+                let inner = 3 * (x[i - 1] - x[i - 2])
+                r = outer - inner
+            default:
+                let ends = x[i] + x[i - 4]
+                let near = 4 * (x[i - 1] + x[i - 3])
+                let mid = 6 * x[i - 2]
+                r = ends - near + mid
+            }
+            out.append(r)
         }
+        return out
     }
 
     private static func zigzag(_ r: Int) -> UInt {

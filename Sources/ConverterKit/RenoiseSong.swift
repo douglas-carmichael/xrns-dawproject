@@ -227,19 +227,39 @@ enum RenoiseWriter {
         let root = XML("RenoiseSong").attr("doc_version", String(song.docVersion))
 
         // --- GlobalSongData ---
+        // Renoise reads this block in a fixed element order (stricter than the
+        // schema's xs:all); skipping the Metronome/Shuffle/compatibility fields
+        // makes it bail and fall back to a 32-BPM default. So emit the full set
+        // in Renoise's own order (matching a native MOD/XM/IT import).
         let g = root.element("GlobalSongData")
         g.leaf("BeatsPerMin", String(format: "%g", song.bpm))
         g.leaf("LinesPerBeat", String(song.linesPerBeat))
         g.leaf("TicksPerLine", String(song.ticksPerLine))
         g.leaf("SignatureNumerator", String(song.signatureNumerator))
         g.leaf("SignatureDenominator", String(song.signatureDenominator))
+        g.leaf("MetronomeBeatsPerBar", "0")
+        g.leaf("MetronomeLinesPerBeat", "0")
+        g.leaf("MetronomeVolume", "0.707945764")
+        g.leaf("ShuffleIsActive", "false")
+        g.element("ShuffleAmounts")
         g.leaf("Octave", "4")
-        if let name = song.songName { g.leaf("SongName", name) }
-        if let artist = song.artist { g.leaf("Artist", artist) }
+        g.leaf("LoopCoeff", "4")
+        g.leaf("SongName", song.songName ?? "")
+        g.leaf("Artist", song.artist ?? "")
         if !song.comments.isEmpty {
             let c = g.element("SongComments")
             for line in song.comments { c.leaf("SongComment", line) }
         }
+        g.leaf("ShowSongCommentsAfterLoading", "false")
+        g.leaf("ShowUsedAutomationsOnly", "false")
+        g.leaf("FollowAutomations", "true")
+        g.leaf("SampleOffsetCompatibilityMode", "true")    // MOD/XM/IT import default
+        g.leaf("PitchEffectsCompatibilityMode", "true")
+        g.leaf("GlobalTrackHeadroom", "0.5")
+        g.leaf("PlaybackEngineVersion", "1")
+        g.leaf("RenderSelectionNameCounter", "0")
+        g.leaf("RecordSampleNameCounter", "0")
+        g.leaf("NewSampleNameCounter", "0")
 
         // --- Instruments ---
         // Renoise needs at least one instrument for notes to reference. Each slot
