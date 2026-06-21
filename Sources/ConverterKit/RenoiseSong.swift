@@ -267,7 +267,11 @@ enum RenoiseWriter {
         g.leaf("MetronomeLinesPerBeat", "0")
         g.leaf("MetronomeVolume", "0.707945764")
         g.leaf("ShuffleIsActive", "false")
-        g.element("ShuffleAmounts")
+        // Renoise's player reads a fixed 4-entry shuffle array; an empty
+        // <ShuffleAmounts/> makes TPlayerGlobalSongData index out of bounds and
+        // crash on load. Emit the four zero amounts Renoise itself writes.
+        let shuffle = g.element("ShuffleAmounts")
+        for _ in 0..<4 { shuffle.leaf("ShuffleAmount", "0") }
         g.leaf("Octave", "4")
         g.leaf("LoopCoeff", "4")
         g.leaf("SongName", song.songName ?? "")
