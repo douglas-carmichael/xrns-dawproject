@@ -53,6 +53,7 @@ struct TSample {
     var loopEnd: Int = 0
     var loopType: Int = 0
     var transpose: Int = 0
+    var volume: Double = 1.0    // sample default volume, 0…1 (XM/IT instrument volume / 64)
     var noteStart: Int = 0
     var noteEnd: Int = 119
 }
@@ -73,6 +74,7 @@ struct TInstrument {
     var pcm: [Int16] = []
     var sampleRate: Int = 8363
     var channels: Int = 1
+    var volume: Double = 1.0    // sample default volume, 0…1 (instrument volume / 64)
     /// New Note Action mapped to Renoise's vocabulary: Cut / NoteOff / None.
     var newNoteAction: String = "NoteOff"
     /// Volume envelope reduced to AHDSR (XM/IT envelope, or AM-synth amplitude

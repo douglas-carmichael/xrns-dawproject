@@ -159,6 +159,16 @@ enum TrackerRenoise {
     private static func patternTrack(_ pattern: [[TCell]], channel ch: Int, rows: Int,
                                      noteOffset: Int, format: String) -> RNPatternTrack {
         var pt = RNPatternTrack()
+        // MOD/S3M effect memory: a pitch slide (porta up/down) or volume slide with
+        // parameter 0 repeats the last non-zero value for that command. Renoise's
+        // slide commands carry no such memory, so a swelling fade-in or a pitch
+        // "acceleration" would stall after one row. We resolve the continue per
+        // command type. (Glide/vibrato keep Renoise's own memory, so are left as-is.)
+        var slideMemory: [Int: Int] = [:]
+        // An effect's shared memory slot, or nil if it has no continue-memory we
+        // resolve: porta up (01) and porta down (02) share libxmp's freq memory;
+        // volume slide (0A) keeps its own. (Glide/vibrato use Renoise's own memory.)
+        func memorySlot(_ t: Int) -> Int? { (t == 0x01 || t == 0x02) ? 0x01 : (t == 0x0A ? 0x0A : nil) }
         for r in 0..<min(rows, pattern.count) {
             let row = pattern[r]
             guard ch < row.count else { continue }
@@ -206,17 +216,32 @@ enum TrackerRenoise {
             // effect (0G/0V) in a second column — Renoise's own IT import can't
             // represent these and writes junk, so we deliberately diverge.
             var effects: [RNEffectColumn] = []
-            if let e = TrackerEffects.effectColumn(type: cell.fx1Type, param: cell.fx1Param, format: format) {
+            // Resolve the per-command continue-memory described above so sustained
+            // fades and pitch slides don't stall after their first row.
+            var fx1p = cell.fx1Param, fx2p = cell.fx2Param
+            if let k1 = memorySlot(cell.fx1Type) {
+                if fx1p != 0 { slideMemory[k1] = fx1p } else { fx1p = slideMemory[k1] ?? 0 }
+            }
+            if let k2 = memorySlot(cell.fx2Type) {
+                if fx2p != 0 { slideMemory[k2] = fx2p } else { fx2p = slideMemory[k2] ?? 0 }
+            }
+            if let e = TrackerEffects.effectColumn(type: cell.fx1Type, param: fx1p, format: format) {
                 effects.append(e)
             }
-            if let e2 = TrackerEffects.secondaryEffect(type: cell.fx2Type, param: cell.fx2Param, format: format) {
+            if let e2 = TrackerEffects.secondaryEffect(type: cell.fx2Type, param: fx2p, format: format) {
                 effects.append(e2)
             }
-            // FAR mid-song tempo (resolved in Xmp.read's FAR pass): emit the
-            // computed BPM as ZT and speed as ZL. fx1Type 0x68 (FX_FAR_TEMPO) is
-            // kept only as the marker; TrackerEffects emits nothing for it.
-            if cell.fx1Type == 0x68, let bpm = cell.setTempoBPM {
-                effects.append(RNEffectColumn(number: "ZT", value: String(format: "%02X", min(255, max(32, Int(bpm))))))
+            // Tempo/speed effects TrackerEffects doesn't translate — FAR coarse/
+            // fine tempo (0x68/0x69), S3M Txx (0xAB), 669 speed (0x7E), Ice speed
+            // (0xA2) — emit from the values Xmp.read resolved (cell.setTempoBPM /
+            // cell.speed) as ZT (BPM) / ZL (speed). The standard speed/tempo
+            // effects already go through TrackerEffects, so this fires only where
+            // a change would otherwise be lost; no double-emit.
+            if [0x68, 0x69, 0xAB, 0x7E, 0xA2].contains(cell.fx1Type)
+                || [0x68, 0x69, 0xAB, 0x7E, 0xA2].contains(cell.fx2Type) {
+                if let bpm = cell.setTempoBPM {
+                    effects.append(RNEffectColumn(number: "ZT", value: String(format: "%02X", min(255, max(32, Int(bpm))))))
+                }
                 if let sp = cell.speed {
                     effects.append(RNEffectColumn(number: "ZL", value: String(format: "%02X", min(255, max(1, sp)))))
                 }
@@ -247,14 +272,14 @@ enum TrackerRenoise {
         // per-format display offset). nil when there's no PCM to embed.
         func make(_ sName: String, _ pcm: [Int16], rate: Int, channels: Int,
                   looped lp: Bool, loopType: Int, loopStart: Int, loopEnd: Int,
-                  baseNote: Int, noteStart: Int, noteEnd: Int) -> RNSample? {
+                  baseNote: Int, noteStart: Int, noteEnd: Int, volume: Double = 1.0) -> RNSample? {
             guard !pcm.isEmpty else { return nil }
             let looped = lp && loopEnd > loopStart && loopEnd > 0
             let (audio, ext): (Data, String) = channels == 2
                 ? (Wav.encode(pcm, sampleRate: rate, channels: 2), "wav")
                 : (Flac.encode(pcm, sampleRate: rate), "flac")
             return RNSample(name: sName.isEmpty ? "Sample" : sName, audio: audio, audioExt: ext,
-                            volume: 1.0, transpose: 0,
+                            volume: volume, transpose: 0,
                             baseNote: max(0, min(119, baseNote)),
                             loopMode: looped ? modes[min(2, max(0, loopType))] : "Off",
                             loopStart: looped ? loopStart : 0,
@@ -274,7 +299,7 @@ enum TrackerRenoise {
                 make($0.name, $0.pcm, rate: $0.sampleRate, channels: $0.channels,
                      looped: $0.looped, loopType: $0.loopType, loopStart: $0.loopStart, loopEnd: $0.loopEnd,
                      baseNote: 48 - $0.transpose + noteOffset,
-                     noteStart: $0.noteStart + noteOffset, noteEnd: $0.noteEnd + noteOffset)
+                     noteStart: $0.noteStart + noteOffset, noteEnd: $0.noteEnd + noteOffset, volume: $0.volume)
             }
             if !rn.isEmpty { return RNInstrument(name: name, samples: rn) }
         }
@@ -283,7 +308,8 @@ enum TrackerRenoise {
         guard let sm = make(name, inst.pcm, rate: inst.sampleRate, channels: inst.channels,
                             looped: inst.looped, loopType: inst.loopType,
                             loopStart: inst.loopStart, loopEnd: inst.loopEnd,
-                            baseNote: 48 - inst.transpose + noteOffset, noteStart: 0, noteEnd: 119)
+                            baseNote: 48 - inst.transpose + noteOffset, noteStart: 0, noteEnd: 119,
+                            volume: inst.volume)
         else { return RNInstrument(name: name) }
         return RNInstrument(name: name, samples: [sm])
     }

@@ -46,6 +46,7 @@ int xmpb_ins_nsm(const struct xmp_module *m, int i);              /* subinstrume
 int xmpb_map_ins(const struct xmp_module *m, int i, int key);    /* subinstrument index for a key, -1 if out of range */
 int xmpb_sub_sid_at(const struct xmp_module *m, int i, int sub); /* sample id of a subinstrument, -1 if invalid */
 int xmpb_sub_xpo_at(const struct xmp_module *m, int i, int sub); /* transpose of a subinstrument */
+int xmpb_sub_vol_at(const struct xmp_module *m, int i, int sub); /* subinstrument (sample) volume 0..64 */
 const char *xmpb_smp_name(const struct xmp_module *m, int s);    /* sample name */
 
 int xmpb_smp_len(const struct xmp_module *m, int s);
