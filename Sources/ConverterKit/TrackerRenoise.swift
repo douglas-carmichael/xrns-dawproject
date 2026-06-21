@@ -78,7 +78,7 @@ enum TrackerRenoise {
             var ptracks: [RNPatternTrack] = []
             for ch in 0..<channels {
                 ptracks.append(patternTrack(pat, channel: ch, rows: rows,
-                                            noteOffset: noteOffset, format: m.format))
+                                            noteOffset: noteOffset, format: m.format, speed: rs.ticksPerLine))
             }
             ptracks.append(RNPatternTrack())   // master pattern track (no notes)
             patterns.append(RNPattern(numberOfLines: rows, tracks: ptracks, trackKinds: trackKinds))
@@ -157,7 +157,7 @@ enum TrackerRenoise {
     /// and no note-offs invented: a note simply rings until the channel's next
     /// note or an explicit OFF, exactly as the tracker plays it.
     private static func patternTrack(_ pattern: [[TCell]], channel ch: Int, rows: Int,
-                                     noteOffset: Int, format: String) -> RNPatternTrack {
+                                     noteOffset: Int, format: String, speed: Int) -> RNPatternTrack {
         var pt = RNPatternTrack()
         // MOD/S3M effect memory: a pitch slide (porta up/down) or volume slide with
         // parameter 0 repeats the last non-zero value for that command. Renoise's
@@ -237,11 +237,15 @@ enum TrackerRenoise {
             if fineFmt && cell.fx1Type == 0x0A {
                 let up = fx1p >> 4, dn = fx1p & 0x0F
                 let amt = (dn == 0xF && up != 0) ? up : (up == 0xF && dn != 0 ? -dn : 0)
-                if amt != 0 {
+                if amt != 0 {                                  // fine slide: ±amt once per row
                     curVol = max(0, min(64, curVol + amt))
                     nc.volume = String(format: "%02X", curVol * 2)
                     hasColumn = true
                     fineVolSlide = true
+                } else if up > 0 {                             // regular up: keep curVol in sync
+                    curVol = min(64, curVol + up * speed)       // so a later fine slide isn't stale
+                } else if dn > 0 {                             // regular down
+                    curVol = max(0, curVol - dn * speed)
                 }
             }
             if !fineVolSlide, let e = TrackerEffects.effectColumn(type: cell.fx1Type, param: fx1p, format: format) {
