@@ -357,40 +357,36 @@ enum RenoiseWriter {
         sm.leaf("LoopMode", s.loopMode)
         sm.leaf("LoopStart", String(max(0, s.loopStart)))
         sm.leaf("LoopEnd", String(max(0, s.loopEnd)))
-        if s.envelope != nil { sm.leaf("ModulationSetIndex", "0") }  // engage the volume envelope
         let map = sm.element("Mapping")
         map.leaf("BaseNote", String(max(0, min(119, s.baseNote))))
         map.leaf("NoteStart", "0")
         map.leaf("NoteEnd", "119")
         map.leaf("MapKeyToPitch", "true")
 
-        // Volume envelope → a Renoise modulation set with a Volume AHDSR device
-        // (structure matches Renoise's own factory instruments).
-        if let env = s.envelope {
-            let set = gen.element("ModulationSets").element("ModulationSet")
-            set.leaf("SelectedPresetName", "Init")
-            set.leaf("SelectedPresetLibrary", "Bundled Content")
-            set.leaf("SelectedPresetIsModified", "true")
-            let d = set.element("Devices").element("SampleAhdsrModulationDevice").attr("type", "SampleAhdsrModulationDevice")
-            d.leaf("IsMaximized", "true")
-            d.leaf("IsSelected", "false")
-            d.leaf("SelectedPresetName", "Init")
-            d.leaf("SelectedPresetLibrary", "Bundled Content")
-            d.leaf("SelectedPresetIsModified", "true")
-            d.add(param("IsActive", "1.0"))
-            d.leaf("Target", "Volume")
-            d.leaf("Operator", "*")
-            d.leaf("Bipolar", "false")
-            d.leaf("TempoSynced", "false")
-            d.add(param("Attack", floatString(env.attack)))
-            d.add(param("Hold", floatString(env.hold)))
-            d.add(param("Decay", floatString(env.decay)))
-            d.add(param("Sustain", floatString(env.sustain)))
-            d.add(param("Release", floatString(env.release)))
-            set.leaf("Name", "Set 01")
-            set.leaf("FilterType", "0")
-            set.leaf("FilterBankVersion", "3")
-        }
+        // Every sample-backed instrument carries the base modulation set Renoise
+        // itself writes on import — a single SampleMixerModulationDevice. Renoise's
+        // module import does NOT translate XM/IT volume envelopes into modulation,
+        // and emitting an AHDSR-only set crashes its instrument-editor UI on load
+        // (TSampleModulationSetView::CreateInputSliderRack), so we emit only this
+        // base device (matching the oracle exactly). The envelope stays in the IR
+        // (and is used by the DAWproject writer) but isn't written to .xrns.
+        let set = gen.element("ModulationSets").element("ModulationSet")
+        set.leaf("SelectedPresetName", "Init")
+        set.leaf("SelectedPresetLibrary", "")
+        set.leaf("SelectedPresetIsModified", "true")
+        let mix = set.element("Devices").element("SampleMixerModulationDevice").attr("type", "SampleMixerModulationDevice")
+        mix.add(param("IsActive", "1.0"))
+        mix.add(param("Volume", "1.0"))
+        mix.add(param("Panning", "0.0"))
+        mix.add(param("Pitch", "0.0"))
+        mix.leaf("PitchModulationRange", "12")
+        mix.add(param("Cutoff", "63.5"))
+        mix.add(param("Resonance", "63.5"))
+        mix.add(param("Drive", "0.0"))
+        set.leaf("Name", "Set 01")
+        set.leaf("FilterType", "0")
+        set.leaf("FilterBankVersion", "3")
+        el.leaf("ActiveGeneratorTab", "Samples")   // ensure the editor opens the valid Samples tab
         return el
     }
 
@@ -472,29 +468,39 @@ enum RenoiseWriter {
 
     private static func patternTrackElement(_ pt: RNPatternTrack, kind: String) -> XML {
         let el = XML(kind).attr("type", kind)
-        let lines = el.element("Lines")
-        for line in pt.lines where !line.noteColumns.isEmpty || !line.effectColumns.isEmpty {
-            let lineEl = lines.element("Line").attr("index", String(line.index))
-            if !line.noteColumns.isEmpty {
-                let ncs = lineEl.element("NoteColumns").attr("type", "PatternLineNoteColumnList")
-                for col in line.noteColumns {
-                    let nc = ncs.element("NoteColumn")
-                    if let n = col.note { nc.leaf("Note", n) }
-                    if let i = col.instrument { nc.leaf("Instrument", i) }
-                    if let v = col.volume { nc.leaf("Volume", v) }
-                    if let p = col.panning { nc.leaf("Panning", p) }
-                    if let d = col.delay { nc.leaf("Delay", d) }
+        el.leaf("SelectedPresetName", "Init")
+        el.leaf("SelectedPresetLibrary", "")
+        el.leaf("SelectedPresetIsModified", "true")
+        // Only regular tracks carry note/effect lines; master/send tracks have
+        // none — matching Renoise's own pattern-track structure.
+        if kind == "PatternTrack" {
+            let lines = el.element("Lines")
+            for line in pt.lines where !line.noteColumns.isEmpty || !line.effectColumns.isEmpty {
+                let lineEl = lines.element("Line").attr("index", String(line.index))
+                if !line.noteColumns.isEmpty {
+                    let ncs = lineEl.element("NoteColumns").attr("type", "PatternLineNoteColumnList")
+                    for col in line.noteColumns {
+                        let nc = ncs.element("NoteColumn")
+                        if let n = col.note { nc.leaf("Note", n) }
+                        if let i = col.instrument { nc.leaf("Instrument", i) }
+                        if let v = col.volume { nc.leaf("Volume", v) }
+                        if let p = col.panning { nc.leaf("Panning", p) }
+                        if let d = col.delay { nc.leaf("Delay", d) }
+                    }
                 }
-            }
-            if !line.effectColumns.isEmpty {
-                let ecs = lineEl.element("EffectColumns").attr("type", "PatternLineEffectColumnList")
-                for ec in line.effectColumns {
-                    let e = ecs.element("EffectColumn")
-                    if let v = ec.value { e.leaf("Value", v) }
-                    if let n = ec.number { e.leaf("Number", n) }
+                if !line.effectColumns.isEmpty {
+                    let ecs = lineEl.element("EffectColumns").attr("type", "PatternLineEffectColumnList")
+                    for ec in line.effectColumns {
+                        let e = ecs.element("EffectColumn")
+                        if let v = ec.value { e.leaf("Value", v) }
+                        if let n = ec.number { e.leaf("Number", n) }
+                    }
                 }
             }
         }
+        el.leaf("AliasPatternIndex", "-1")
+        el.leaf("ColorEnabled", "false")
+        el.leaf("Color", "0,0,0")
         return el
     }
 }
