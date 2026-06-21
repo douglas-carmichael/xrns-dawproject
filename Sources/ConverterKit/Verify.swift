@@ -57,44 +57,73 @@ public enum Verify {
         var cur = [Int](repeating: 0, count: m.channels)
         var active = [Bool](repeating: false, count: m.channels)
         var mem = [Int](repeating: 0, count: m.channels)
-        var div: [(pat: Int, row: Int, ch: Int, mine: Int, lib: Int)] = []
+        var curInst = [Int](repeating: -1, count: m.channels)
+        var div: [(pat: Int, row: Int, ch: Int, mine: Int, lib: Int, myNote: Int, libNote: Int)] = []
+        var envCells = 0    // active cells on enveloped instruments — volume is envelope-driven, not model-checkable
         for f in frames where f.pattern >= 0 && f.pattern < m.patterns.count {
             let pat = m.patterns[f.pattern]
             guard f.row < pat.count else { continue }
             for ch in 0..<m.channels where ch < pat[f.row].count {
                 let cell = pat[f.row][ch]
                 let glide = (cell.fx1Type == 0x03 || cell.fx1Type == 0x05)   // Gxx / Lxy: slide to note, no retrigger
-                if cell.noteOff { active[ch] = false; cur[ch] = 0 }
+                if let i = cell.instrument { curInst[ch] = i - 1 }           // libxmp ev.ins is 1-based
+                let ins = curInst[ch], valid = ins >= 0 && ins < m.instruments.count
+                let enveloped = valid && m.instruments[ins].envelope != nil
+                // Sample-default volume on (re)trigger. For a plain single-sample
+                // instrument (MOD/S3M) sub-0's volume IS the playback default. For a
+                // multi-sample (key-mapped) or enveloped instrument (IT/XM) the note
+                // maps to a keyzone sub and/or the envelope drives the level, so
+                // sub-0's volume is meaningless — assume full and let the note play.
+                let sdef = (valid && m.instruments[ins].samples.isEmpty && !enveloped)
+                    ? Int((m.instruments[ins].volume * 64).rounded()) : 64
+                // A note-off cuts a plain sample, but on an enveloped instrument it
+                // starts the envelope's release — libxmp (and Renoise, which plays the
+                // exported envelope) keep sounding, so don't model it as instant silence.
+                if cell.noteOff { if !enveloped { active[ch] = false; cur[ch] = 0 } }
                 else if cell.note != nil {
+                    let wasActive = active[ch]
                     active[ch] = true
                     if let v = cell.volume { cur[ch] = v - 1 }
-                    else if !glide { cur[ch] = 64 }                          // retrigger → default; glide keeps volume
-                } else if let v = cell.volume { cur[ch] = v - 1 }
+                    else if glide { /* slide to note: keep running volume */ }
+                    else if cell.instrument != nil || !wasActive { cur[ch] = sdef }   // a sample # (or first hit) resets to default; a bare note keeps the running volume
+                } else if cell.instrument != nil { if active[ch] { cur[ch] = sdef } }  // instrument-only row resets volume
+                else if let v = cell.volume { cur[ch] = v - 1 }
                 if cell.fx1Type == 0x0C { active[ch] = true; cur[ch] = min(64, cell.fx1Param) }   // Cxx set volume
+                // Volume slide (Axy / Dxy). Fine slides apply on tick 0, so they change
+                // THIS row's frame-0 value; regular slides apply on ticks 1…speed-1, so
+                // their effect first shows at the NEXT row's frame 0. libxmp is sampled
+                // at frame 0, so apply fine now and defer the regular step past compare.
+                var regSlide = 0
                 if active[ch] && cell.fx1Type == 0x0A {
                     var p = cell.fx1Param
                     if p != 0 { mem[ch] = p } else { p = mem[ch] }
                     let up = p >> 4, dn = p & 0x0F
                     if fineFmt && dn == 0xF && up != 0 { cur[ch] = min(64, cur[ch] + up) }
                     else if fineFmt && up == 0xF && dn != 0 { cur[ch] = max(0, cur[ch] - dn) }
-                    else if up > 0 { cur[ch] = min(64, cur[ch] + up * speed) }
-                    else if dn > 0 { cur[ch] = max(0, cur[ch] - dn * speed) }
+                    else if up > 0 { regSlide = up * speed }
+                    else if dn > 0 { regSlide = -dn * speed }
                 }
                 let mine = active[ch] ? cur[ch] : 0
                 let lib = Int((Double(f.vol[ch]) * scale).rounded())
-                if lib >= 6 && abs(mine - lib) > threshold {
-                    div.append((f.pattern, f.row, ch, mine, lib))
+                if lib >= 6 {
+                    if enveloped { envCells += 1 }      // envelope drives the level (exported to Renoise as-is); model can't check
+                    else if abs(mine - lib) > threshold {
+                        div.append((f.pattern, f.row, ch, mine, lib, cell.note ?? -1, ch < f.note.count ? f.note[ch] : -1))
+                    }
                 }
+                if regSlide != 0 { cur[ch] = max(0, min(64, cur[ch] + regSlide)) }   // takes effect from the next row
             }
         }
         let cells = frames.count * m.channels
         print("verify \(URL(fileURLWithPath: path).lastPathComponent): \(m.format) \(m.channels)ch, \(frames.count) rows captured, libxmp volmax=\(maxLib)")
-        print("  volume divergences > \(threshold)/64: \(div.count) of \(cells) cells (\(cells > 0 ? div.count * 100 / cells : 0)%)")
+        let checked = cells - envCells
+        print("  volume divergences > \(threshold)/64: \(div.count) of \(checked) checked cells (\(checked > 0 ? div.count * 100 / checked : 0)%)")
+        if envCells > 0 { print("    (\(envCells) enveloped-instrument cells skipped — level is envelope-driven and exported to Renoise unchanged)") }
         let byPat = Dictionary(grouping: div, by: { $0.pat }).mapValues { $0.count }.sorted { $0.value > $1.value }
         for (pat, cnt) in byPat.prefix(12) { print("    pattern \(pat): \(cnt) divergent cells") }
         print("  worst cells (mine vs libxmp):")
         for d in div.sorted(by: { abs($0.mine - $0.lib) > abs($1.mine - $1.lib) }).prefix(15) {
-            print("    pat\(d.pat) row\(d.row) ch\(d.ch): mine=\(d.mine) libxmp=\(d.lib)")
+            print("    pat\(d.pat) row\(d.row) ch\(d.ch): mine=\(d.mine) libxmp=\(d.lib)  (myNote=\(d.myNote) libNote=\(d.libNote))")
         }
     }
 }
