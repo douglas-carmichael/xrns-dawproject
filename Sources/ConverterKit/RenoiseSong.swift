@@ -419,7 +419,11 @@ enum RenoiseWriter {
         let names = el.element("NoteColumnNames")
         for _ in 0..<12 { names.element("NoteColumnName") }
 
-        el.leaf("NumberOfVisibleNoteColumns", String(max(1, min(12, t.visibleNoteColumns))))
+        // Only regular tracks carry note columns; the master/send tracks declare
+        // 0 (matching Renoise's own output — a non-regular track with note columns
+        // is invalid and can crash Renoise on load).
+        let visibleNote = t.kind == .regular ? max(1, min(12, t.visibleNoteColumns)) : 0
+        el.leaf("NumberOfVisibleNoteColumns", String(visibleNote))
         el.leaf("NumberOfVisibleEffectColumns", String(max(1, min(8, t.visibleEffectColumns))))
         el.leaf("VolumeColumnIsVisible", "true")
         el.leaf("PanningColumnIsVisible", "true")

@@ -108,9 +108,9 @@ Polyend Tracker project, and any other non-round-trip extension is treated as a
 tracker module identified by content. The target is --to, else the -o extension,
 else: xrns/midi/module/polyend → dawproject (polyend/dawproject → xrns).
 
-Polyend support is EXPERIMENTAL: a project is a folder (project.mt + patterns/ +
-instruments/ + samples/). Export quantises to the step grid and is monophonic
-per track. Stereo samples are preserved (embedded as WAV in .xrns).
+A Polyend Tracker project is a folder (project.mt + patterns/ + instruments/ +
+samples/). Export quantises to the step grid and is monophonic per track; stereo
+samples are preserved (embedded as WAV in .xrns).
 """
 
 func parseArguments(_ args: [String]) throws -> Options {
@@ -170,8 +170,15 @@ func parseArguments(_ args: [String]) throws -> Options {
 /// `SampleData/Instrument{NN} (name)` convention (drop path separators / control
 /// characters, collapse whitespace, cap length).
 private func sanitizeRenoiseName(_ s: String) -> String {
-    let cleaned = String(s.map { ch in
-        (ch == "/" || ch == "\\" || ch == ":" || ch.isNewline || ch == "\t") ? "_" : ch
+    // Must match Renoise's own sample-path sanitisation, or Renoise looks for the
+    // embedded audio at a path that doesn't exist and crashes on a declared-but-
+    // missing sample. Renoise replaces the cross-platform-illegal set
+    // < > : " / \ | ? * (and control characters) with '_'.
+    let illegal: Set<Character> = ["<", ">", ":", "\"", "/", "\\", "|", "?", "*"]
+    let cleaned = String(s.map { ch -> Character in
+        if illegal.contains(ch) { return "_" }
+        if let v = ch.unicodeScalars.first?.value, v < 0x20 { return "_" }
+        return ch
     }).trimmingCharacters(in: .whitespaces)
     let capped = cleaned.count > 60 ? String(cleaned.prefix(60)).trimmingCharacters(in: .whitespaces) : cleaned
     return capped.isEmpty ? "Sample" : capped
