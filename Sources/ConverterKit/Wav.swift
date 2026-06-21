@@ -66,4 +66,40 @@ enum Wav {
         out += body
         return Data(out)
     }
+
+    /// Decode a RIFF/PCM WAV to interleaved 16-bit samples. Handles 8-bit
+    /// (unsigned, promoted to signed 16-bit) and 16-bit PCM; returns nil for
+    /// other encodings or malformed input.
+    static func decode(_ data: Data) -> (pcm: [Int16], channels: Int, sampleRate: Int)? {
+        let b = [UInt8](data)
+        guard b.count > 12, b[0] == 0x52, b[1] == 0x49, b[2] == 0x46, b[3] == 0x46,  // "RIFF"
+              b[8] == 0x57, b[9] == 0x41, b[10] == 0x56, b[11] == 0x45 else { return nil }  // "WAVE"
+        func u16(_ i: Int) -> Int { i + 1 < b.count ? Int(b[i]) | Int(b[i + 1]) << 8 : 0 }
+        func u32(_ i: Int) -> Int { i + 3 < b.count ? Int(b[i]) | Int(b[i + 1]) << 8 | Int(b[i + 2]) << 16 | Int(b[i + 3]) << 24 : 0 }
+
+        var off = 12, channels = 1, rate = 44100, bits = 16
+        while off + 8 <= b.count {
+            let id = String(bytes: b[off ..< off + 4], encoding: .ascii) ?? ""
+            let size = u32(off + 4)
+            if id == "fmt " {
+                channels = max(1, u16(off + 10)); rate = u32(off + 12); bits = u16(off + 22)
+            } else if id == "data" {
+                let start = off + 8, end = min(b.count, start + size)
+                var pcm: [Int16] = []
+                if bits == 16 {
+                    pcm.reserveCapacity((end - start) / 2)
+                    var i = start
+                    while i + 1 < end { pcm.append(Int16(bitPattern: UInt16(b[i]) | UInt16(b[i + 1]) << 8)); i += 2 }
+                } else if bits == 8 {
+                    pcm.reserveCapacity(end - start)
+                    for i in start ..< end { pcm.append(Int16(truncatingIfNeeded: (Int(b[i]) - 128) << 8)) }
+                } else {
+                    return nil
+                }
+                return (pcm, channels, max(1, rate))
+            }
+            off += 8 + size + (size & 1)
+        }
+        return nil
+    }
 }

@@ -143,7 +143,32 @@ enum RenoiseReader {
             song.sequence = Array(0..<song.patterns.count)
         }
 
+        // Instruments: names + sample metadata (baseNote, loop, NNA). The sample
+        // audio lives in the container; the .xrns reader decodes and attaches it.
+        if let insts = root.firstChild("Instruments") {
+            for el in insts.elements(forName: "Instrument") {
+                song.instruments.append(parseInstrument(el))
+            }
+        }
+
         return song
+    }
+
+    /// Parse one `<Instrument>`: its name and (if present) its first sample's
+    /// metadata. Audio is left empty here — decoded from the ZIP by the reader.
+    private static func parseInstrument(_ el: XML) -> RNInstrument {
+        let name = el.childText("Name") ?? ""
+        guard let sm = el.firstChild("SampleGenerator")?.firstChild("Samples")?.firstChild("Sample") else {
+            return RNInstrument(name: name, sample: nil)
+        }
+        var s = RNSample(name: sm.childText("Name") ?? name, audio: Data())
+        s.baseNote = sm.firstChild("Mapping")?.childInt("BaseNote") ?? 48
+        s.transpose = sm.childInt("Transpose") ?? 0
+        s.loopMode = sm.childText("LoopMode") ?? "Off"
+        s.loopStart = sm.childInt("LoopStart") ?? 0
+        s.loopEnd = sm.childInt("LoopEnd") ?? 0
+        s.newNoteAction = sm.childText("NewNoteAction") ?? "NoteOff"
+        return RNInstrument(name: name, sample: s)
     }
 
     private static func parseTrack(_ el: XML) -> RNTrack? {

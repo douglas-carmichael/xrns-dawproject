@@ -48,6 +48,12 @@ public enum Zip {
         }
     }
 
+    /// List the entry names in an archive (central-directory order). Returns an
+    /// empty array if the archive can't be read.
+    public static func entryNames(inArchive data: Data) -> [String] {
+        ((try? centralDirectory([UInt8](data))) ?? []).map { $0.name }
+    }
+
     /// Build a ZIP archive (STORED entries) from in-memory contents.
     public static func create(entries: [(name: String, data: Data)]) -> Data {
         var out = [UInt8]()

@@ -27,4 +27,31 @@ final class FlacTests: XCTestCase {
                        Array("fLaC".utf8))
         XCTAssertEqual(Array(Flac.encode([], sampleRate: 8363).prefix(4)), Array("fLaC".utf8))
     }
+
+    /// The decoder reproduces what our encoder writes (exercises CONSTANT, FIXED
+    /// orders 0–4, partitioned Rice and multi-frame streams). LPC and stereo
+    /// decorrelation — which our encoder doesn't emit — are covered by decoding
+    /// real Renoise samples in the .xrns import path.
+    func testFlacDecodeRoundTrip() {
+        let cases: [(String, [Int16])] = [
+            ("silence", [Int16](repeating: 0, count: 1000)),               // CONSTANT
+            ("constant", [Int16](repeating: -12345, count: 300)),
+            ("ramp", (0..<6000).map { Int16(truncatingIfNeeded: $0) }),     // FIXED low order
+            ("sine", (0..<6000).map { Int16(truncatingIfNeeded: Int(Double(Int16.max) * 0.7 * sin(Double($0) * 0.03))) }),
+            ("noisy", (0..<9000).map { Int16(truncatingIfNeeded: ($0 &* 2654435761) ^ ($0 >> 5)) }),  // multi-frame
+            ("extremes", [.min, .max, 0, -1, 1, .min, .max, 32766, -32767]),
+        ]
+        for (name, pcm) in cases {
+            let encoded = Flac.encode(pcm, sampleRate: 44100)
+            guard let dec = Flac.decode(encoded) else { XCTFail("\(name): decode returned nil"); continue }
+            XCTAssertEqual(dec.channels, 1, "\(name): channels")
+            XCTAssertEqual(dec.sampleRate, 44100, "\(name): rate")
+            XCTAssertEqual(dec.pcm, pcm, "\(name): PCM round-trip")
+        }
+    }
+
+    func testFlacDecodeRejectsGarbage() {
+        XCTAssertNil(Flac.decode(Data([0, 1, 2, 3, 4, 5])))
+        XCTAssertNil(Flac.decode(Data("NOTFLAC!".utf8)))
+    }
 }

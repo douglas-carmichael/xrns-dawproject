@@ -204,12 +204,48 @@ private func countNoteOns(_ renoise: RenoiseSong) -> Int {
     return n
 }
 
+/// Decode each Renoise instrument's embedded sample (FLAC or WAV, located by the
+/// `SampleData/Instrument{NN} (...)` folder convention) into the IR instrument
+/// table, so samples — mono or stereo — flow out of a .xrns. A nil sample is an
+/// empty slot; the array is indexed by Renoise instrument slot (what notes
+/// reference), so gaps are preserved.
+private func renoiseSamples(archive data: Data, instruments: [RNInstrument]) -> [IRInstrument] {
+    guard !instruments.isEmpty else { return [] }
+    let names = Zip.entryNames(inArchive: data)
+    return instruments.enumerated().map { i, inst in
+        guard let meta = inst.sample else { return IRInstrument(name: inst.name, sample: nil) }
+        let prefix = "SampleData/Instrument\(String(format: "%02d", i)) "
+        guard let entry = names.first(where: { $0.hasPrefix(prefix) && ($0.hasSuffix(".flac") || $0.hasSuffix(".wav")) }),
+              let bytes = try? Zip.read(entry: entry, fromArchive: data) else {
+            return IRInstrument(name: inst.name, sample: nil)
+        }
+        let decoded: (pcm: [Int16], channels: Int, sampleRate: Int)? =
+            entry.hasSuffix(".flac") ? Flac.decode(bytes).map { ($0.pcm, $0.channels, $0.sampleRate) }
+                                     : Wav.decode(bytes)
+        guard let d = decoded, !d.pcm.isEmpty else { return IRInstrument(name: inst.name, sample: nil) }
+        let looped = meta.loopMode != "Off" && meta.loopEnd > meta.loopStart
+        let loopType = ["Forward": 0, "PingPong": 1, "Backward": 2][meta.loopMode] ?? 0
+        let sample = ExtractedSample(name: meta.name, comment: nil, pcm: d.pcm,
+                                     sampleRate: d.sampleRate, channels: d.channels,
+                                     rootKey: meta.baseNote + 12,   // Renoise note (C-4=48) → MIDI 60
+                                     loopStart: looped ? meta.loopStart : 0,
+                                     loopEnd: looped ? meta.loopEnd : 0,
+                                     loopType: loopType, newNoteAction: meta.newNoteAction)
+        return IRInstrument(name: inst.name, sample: sample)
+    }
+}
+
 private func readIR(_ format: Format, _ data: Data, path: String?, layout: TrackLayout) throws -> IRSong {
     var stats = ConvertStats()
     switch format {
     case .xrns:
         let song = try RenoiseReader.read(songXML: Zip.read(entry: "Song.xml", fromArchive: data))
-        return ToIR.fromRenoise(song, stats: &stats)
+        var ir = ToIR.fromRenoise(song, stats: &stats)
+        ir.instruments = renoiseSamples(archive: data, instruments: song.instruments)
+        // Also expose the decoded audio as reference samples for the DAWproject
+        // writer (which embeds `extractedSamples`).
+        ir.extractedSamples = ir.instruments.compactMap { $0.sample }
+        return ir
     case .dawproject:
         let project = try Zip.read(entry: "project.xml", fromArchive: data)
         let metadata = try? Zip.read(entry: "metadata.xml", fromArchive: data)
