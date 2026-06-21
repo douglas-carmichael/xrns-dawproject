@@ -193,7 +193,7 @@ private func writeIR(_ format: Format, _ song: IRSong, lpb: Int?, stats: inout C
         for (i, inst) in renoise.instruments.enumerated() {
             guard let s = inst.sample else { continue }
             let dir = "SampleData/Instrument\(String(format: "%02d", i)) (\(sanitizeRenoiseName(inst.name)))"
-            entries.append(("\(dir)/Sample00 (\(sanitizeRenoiseName(s.name))).wav", s.wav))
+            entries.append(("\(dir)/Sample00 (\(sanitizeRenoiseName(s.name))).\(s.audioExt)", s.audio))
         }
         return Zip.create(entries: entries)
     case .dawproject:

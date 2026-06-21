@@ -51,11 +51,12 @@ struct RNTrack {
 }
 
 /// One sample inside a Renoise instrument. The audio is embedded in the .xrns
-/// ZIP under `SampleData/Instrument{NN} (name)/Sample00 (name).wav` and located
-/// by that folder convention (no `<FileName>` needed).
+/// ZIP under `SampleData/Instrument{NN} (name)/Sample00 (name).{audioExt}` and
+/// located by that folder convention (no `<FileName>` needed).
 struct RNSample {
     var name: String
-    var wav: Data                          // WAV bytes to embed in the container
+    var audio: Data                        // encoded audio bytes to embed (FLAC, like Renoise)
+    var audioExt: String = "flac"          // container extension for the audio
     var volume: Double = 1.0
     var transpose: Int = 0                 // semitones
     var baseNote: Int = 48                 // root key as a Renoise note (C-4 = 48 = MIDI 60)
@@ -244,12 +245,12 @@ enum RenoiseWriter {
         // Renoise needs at least one instrument for notes to reference. Each slot
         // is emitted in order; sample-backed slots carry a playable sample whose
         // audio is embedded in the container under SampleData/ (see writeIR).
-        let instruments = root.element("Instruments").attr("type", "InstrumentList")
+        let instruments = root.element("Instruments")
         let slots = song.instruments.isEmpty ? [RNInstrument(name: "Converted Instrument")] : song.instruments
         for slot in slots { instruments.add(instrumentElement(slot)) }
 
         // --- Tracks ---
-        let tracksEl = root.element("Tracks").attr("type", "TrackList")
+        let tracksEl = root.element("Tracks")
         for t in song.tracks {
             tracksEl.add(trackElement(t))
         }
@@ -286,12 +287,16 @@ enum RenoiseWriter {
     /// with a single mapped sample (root key, loop, NNA); the audio itself is
     /// embedded in the container by the ZIP step, located by folder convention.
     private static func instrumentElement(_ inst: RNInstrument) -> XML {
-        let el = XML("Instrument").attr("type", "Instrument")
+        // Real Renoise instruments/samples carry NO `type` attribute — only
+        // polymorphic items (track kinds, devices) do. Emitting type="Instrument"
+        // is what makes Renoise fail with "could not create an object of type
+        // instrument", so these wrappers/items stay attribute-free.
+        let el = XML("Instrument")
         el.leaf("Name", inst.name)
         guard let s = inst.sample else { return el }
 
         let gen = el.element("SampleGenerator")
-        let samples = gen.element("Samples").attr("type", "SampleList")
+        let samples = gen.element("Samples")
         let sm = samples.element("Sample")
         sm.leaf("Name", s.name)
         sm.leaf("Volume", floatString(s.volume))

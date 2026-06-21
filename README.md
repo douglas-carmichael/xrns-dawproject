@@ -187,10 +187,11 @@ output is organised the way a composer thinks:
 - **Correct octaves**: libxmp normalises every format onto one note scale (its
   "C-4" → MIDI 60) and resolves each instrument's tuning (XM relative-note,
   S3M/IT C5 rate, …), so notes land in the octave the instrument actually sounds at.
-- **The original sounds, extracted**: every sample libxmp decodes is written to a
-  WAV carrying its **root key** and **loop** (start/end and type — forward /
-  ping-pong / backward) in the standard `smpl` chunk, so a sampler picks it up
-  automatically. *Where* it lands depends on the target (below).
+- **The original sounds, extracted**: every sample libxmp decodes is encoded with
+  its **root key** and **loop** (start/end and type — forward / ping-pong /
+  backward) and embedded — as a WAV (DAWproject reference audio) or as **FLAC**
+  (Renoise, matching its native format and a fraction of the size). *Where* it
+  lands and how it's used depends on the target (below).
 
 The score, tempo map (including mid-song tempo changes), and instrument metadata
 are always carried. **Companion files are resolved** when they sit next to the
@@ -214,8 +215,9 @@ Renoise *is* a sampler, so a module → `.xrns` comes across **fully playable**:
 
 - **Each instrument becomes a real Renoise instrument** with its sample mapped at
   the right **root key**, **loop** (Off / Forward / Backward / PingPong), and
-  **New Note Action** (from the module's NNA) — embedded under `SampleData/` where
-  Renoise expects it. Hit play and it sounds like the original.
+  **New Note Action** (from the module's NNA) — encoded as **FLAC** (Renoise's
+  native format) under `SampleData/` where Renoise expects it. Hit play and it
+  sounds like the original.
 - **Volume envelopes** (XM/IT instrument envelopes, and Startrekker AM amplitude
   envelopes) are reduced to a Renoise volume **AHDSR** modulation device — the
   sustain level is exact and the shape is faithful, though the absolute attack/
@@ -273,7 +275,8 @@ Sources/ConverterKit/              the Swift library (all conversion logic)
   RenoiseSong.swift                Renoise model + Song.xml reader & writer
   DawProject.swift                 project.xml / metadata.xml reader & writer (+ sample audio)
   Smf.swift                        Standard MIDI File reader & writer (IR ⇄ .mid)
-  Wav.swift                        WAV/PCM encoder with smpl (root key + loop) chunk
+  Wav.swift                        WAV/PCM encoder with smpl chunk (DAWproject audio)
+  Flac.swift                       pure-Swift FLAC encoder (Renoise sample audio)
   Xmp.swift                        libxmp bridge: decoded xmp_module → shared tracker model
   Tracker.swift                    shared tracker model + composer-oriented IR converter
   Converter.swift                  IR ⇄ Renoise, IR ⇄ DAWproject (timing, commands, LPB, tempo map)

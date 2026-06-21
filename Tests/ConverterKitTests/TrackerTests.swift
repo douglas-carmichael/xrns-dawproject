@@ -73,7 +73,9 @@ final class TrackerTests: XCTestCase {
         // The "kick" sample becomes a playable, looped, mapped Renoise instrument.
         let inst = rs.instruments.first { $0.name == "kick" }
         let sample = try XCTUnwrap(inst?.sample, "instrument should carry a playable sample")
-        XCTAssertFalse(sample.wav.isEmpty)
+        XCTAssertFalse(sample.audio.isEmpty)
+        XCTAssertEqual(Array(sample.audio.prefix(4)), Array("fLaC".utf8))   // embedded as FLAC
+        XCTAssertEqual(sample.audioExt, "flac")
         XCTAssertEqual(sample.loopMode, "Forward")     // minimalMod loops frames 0..8
         XCTAssertEqual(sample.loopEnd, 8)
         XCTAssertEqual(sample.baseNote, 48)            // rootKey MIDI 60 → Renoise note 48 (C-4)
