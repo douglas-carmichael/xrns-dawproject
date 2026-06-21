@@ -231,7 +231,9 @@ enum ToRenoise {
     /// Convert to a Renoise song. `linesPerBeat` overrides the grid; nil derives
     /// it from the song's tempo via `derivedLinesPerBeat`.
     static func fromIR(_ song: IRSong, linesPerBeat: Int?, stats: inout ConvertStats) -> RenoiseSong {
-        let lpb = max(1, linesPerBeat ?? derivedLinesPerBeat(forBPM: song.tempo))
+        // Explicit --lpb wins; else the source's natural grid (a tracker's
+        // rows/beat → 1 row = 1 line, like Renoise's own import); else derive.
+        let lpb = max(1, linesPerBeat ?? song.gridLinesPerBeat ?? derivedLinesPerBeat(forBPM: song.tempo))
         stats.linesPerBeat = lpb
         var rs = RenoiseSong()
         rs.docVersion = 67

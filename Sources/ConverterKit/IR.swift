@@ -157,6 +157,10 @@ struct IRSong {
     var tempoMap: [IRTempoPoint] = []
     var signatureNumerator: Int = 4
     var signatureDenominator: Int = 4
+    /// Natural lines-per-beat of the source grid (e.g. a tracker's 4 rows/beat).
+    /// The Renoise writer prefers this so 1 tracker row → 1 line (matching a
+    /// native Renoise module import); nil means derive LPB from tempo instead.
+    var gridLinesPerBeat: Int? = nil
     var title: String?
     var artist: String?
     var comment: String?

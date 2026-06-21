@@ -82,6 +82,7 @@ enum Tracker {
         let rpb = Double(max(1, m.rowsPerBeat))
         var song = IRSong()
         song.title = m.title.isEmpty ? nil : m.title
+        song.gridLinesPerBeat = m.rowsPerBeat   // 1 tracker row → 1 Renoise line (LPB = rows/beat)
 
         struct Open { var startBeat: Double; var key: Int; var velocity: Double; var instrument: Int; var offset: Int }
         struct ParsedNote { var channel: Int; var instrument: Int; var note: IRNote }
