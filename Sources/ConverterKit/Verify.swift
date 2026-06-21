@@ -113,13 +113,26 @@ public enum Verify {
                 if let i = cell.instrument { curInst[ch] = i - 1 }           // libxmp ev.ins is 1-based
                 let ins = curInst[ch], valid = ins >= 0 && ins < m.instruments.count
                 let enveloped = valid && m.instruments[ins].envelope != nil
+                // An instrument with no audio (a macro/placeholder the song still
+                // triggers) makes no sound; libxmp reports a phantom channel volume for
+                // it, so don't compare. Both our output and Renoise's leave it empty.
+                let hasAudio = valid && (!m.instruments[ins].pcm.isEmpty || !m.instruments[ins].samples.isEmpty)
                 // Sample-default volume on (re)trigger. For a plain single-sample
                 // instrument (MOD/S3M) sub-0's volume IS the playback default. For a
                 // multi-sample (key-mapped) or enveloped instrument (IT/XM) the note
                 // maps to a keyzone sub and/or the envelope drives the level, so
                 // sub-0's volume is meaningless — assume full and let the note play.
-                let sdef = (valid && m.instruments[ins].samples.isEmpty && !enveloped)
-                    ? Int((m.instruments[ins].volume * 64).rounded()) : 64
+                let sdef: Int = {
+                    guard valid else { return 64 }
+                    let inst = m.instruments[ins]
+                    if !inst.samples.isEmpty {      // multi-sample: use the keyzone the note maps to (libxmp key space = cell.note)
+                        if let n = cell.note, let s = inst.samples.first(where: { n >= $0.noteStart && n <= $0.noteEnd }) {
+                            return Int((s.volume * 64).rounded())
+                        }
+                        return 64
+                    }
+                    return inst.envelope != nil ? 64 : Int((inst.volume * 64).rounded())
+                }()
                 // A note-off cuts a plain sample, but on an enveloped instrument it
                 // starts the envelope's release — libxmp (and Renoise, which plays the
                 // exported envelope) keep sounding, so don't model it as instant silence.
@@ -172,7 +185,7 @@ public enum Verify {
                 }
                 let mine = active[ch] ? cur[ch] : 0
                 let lib = Int((Double(f.vol[ch]) * scale).rounded())
-                if lib >= 6 {
+                if lib >= 6 && hasAudio {
                     if enveloped { envCells += 1 }      // envelope drives the level (exported to Renoise as-is); model can't check
                     else if abs(mine - lib) > threshold {
                         let mineGv = Int((Double(mine) * Double(gv) / 64.0).rounded())
