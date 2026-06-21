@@ -85,3 +85,15 @@ extern int libxmp_far_translate_tempo(int mode, int fine_change, int coarse,
 int xmpb_far_tempo(int mode, int fine_change, int coarse, int *fine, int *speed, int *bpm) {
 	return libxmp_far_translate_tempo(mode, fine_change, coarse, fine, speed, bpm);
 }
+
+/* --- Playback capture for automated verification --- */
+static struct xmp_frame_info g_fi;
+int xmpb_play_start(xmp_context c) { return xmp_start_player(c, 44100, 0); }
+int xmpb_play_frame(xmp_context c) { int r = xmp_play_frame(c); xmp_get_frame_info(c, &g_fi); return r; }
+int xmpb_fi_pos(void)   { return g_fi.pos; }
+int xmpb_fi_pattern(void) { return g_fi.pattern; }
+int xmpb_fi_row(void)   { return g_fi.row; }
+int xmpb_fi_frame(void) { return g_fi.frame; }
+int xmpb_fi_loop(void)  { return g_fi.loop_count; }
+int xmpb_fi_chvol(int ch)  { return (ch >= 0 && ch < XMP_MAX_CHANNELS) ? g_fi.channel_info[ch].volume : 0; }
+int xmpb_fi_chnote(int ch) { return (ch >= 0 && ch < XMP_MAX_CHANNELS) ? (int)g_fi.channel_info[ch].note : -1; }

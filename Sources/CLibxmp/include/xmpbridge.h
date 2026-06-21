@@ -65,4 +65,17 @@ int xmpb_env_sus(const struct xmp_module *m, int i);
 int xmpb_env_time(const struct xmp_module *m, int i, int p);
 int xmpb_env_val(const struct xmp_module *m, int i, int p);
 
+/* Playback capture for automated verification: drive libxmp's player and read
+ * the live mixer state per tick, so the converter's output can be diffed against
+ * the reference playback (per-row, per-channel volume and note). */
+int xmpb_play_start(xmp_context c);
+int xmpb_play_frame(xmp_context c);   /* advance one tick; caches frame info; <0 at end */
+int xmpb_fi_pos(void);                /* order position of the cached frame */
+int xmpb_fi_pattern(void);            /* current pattern number */
+int xmpb_fi_row(void);                /* row within the pattern */
+int xmpb_fi_frame(void);              /* tick within the row (0 = row start) */
+int xmpb_fi_loop(void);               /* loop count (>0 once the song has looped) */
+int xmpb_fi_chvol(int ch);            /* channel mixer volume */
+int xmpb_fi_chnote(int ch);           /* channel note, -1 if idle */
+
 #endif

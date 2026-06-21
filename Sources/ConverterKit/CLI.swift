@@ -96,6 +96,8 @@ OPTIONS:
       --lpb <n>         Lines/steps-per-beat grid (.xrns and Polyend targets)
       --layout <mode>   Module track layout: channel | instrument
   -v, --verbose         Print a conversion summary
+      --verify          Diff the conversion's volume envelope against libxmp's
+                        own playback (any format) — no output file written
   -h, --help            Show this help
 """
 
@@ -388,6 +390,14 @@ public func runCLI(_ args: [String]) -> Int32 {
     if args.contains("-h") || args.contains("--help") {
         print(usage)
         return 0
+    }
+    if args.contains("--verify") {
+        let paths = args.filter { !$0.hasPrefix("-") }
+        guard let path = paths.last else {
+            FileHandle.standardError.write(Data("error: --verify needs a module path\n".utf8)); return 1
+        }
+        do { try Verify.run(path); return 0 }
+        catch { FileHandle.standardError.write(Data("error: \(error)\n".utf8)); return 1 }
     }
     do {
         try convert(try parseArguments(args))
