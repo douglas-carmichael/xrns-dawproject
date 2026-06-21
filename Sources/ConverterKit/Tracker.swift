@@ -30,6 +30,8 @@ struct TCell {
     var volume: Int?        // 0...64 volume column (nil = none)
     var sampleOffset: Int?  // 9xx/Oxx parameter (slices a multi-sound sample)
     var setTempoBPM: Double? // tempo (BPM) change triggered on this row
+    var speed: Int?         // speed (ticks/row) set on this row, from any speed
+                            // effect in either column (incl. 669's FX_SPEED_CP)
     /// Raw libxmp effect columns (FX_* in effects.h). fx1 is the main effect,
     /// fx2 the secondary (often an XM/IT volume-column effect). 0 type = none.
     var fx1Type: Int = 0, fx1Param: Int = 0
@@ -114,12 +116,11 @@ enum Tracker {
         song.title = m.title.isEmpty ? nil : m.title
 
         // A speed/tempo effect on the first played row sets the effective start
-        // values (the header speed is only a default).
-        func speedChange(_ cell: TCell) -> Int? {
-            if cell.fx1Type == 0x0F, cell.fx1Param >= 1, cell.fx1Param < 0x20 { return cell.fx1Param }
-            if cell.fx1Type == 0xA3, cell.fx1Param >= 1 { return cell.fx1Param }   // S3M/IT speed
-            return nil
-        }
+        // values (the header speed is only a default — and for some formats, e.g.
+        // 669, the header speed is a fixed placeholder and the real speed lives
+        // only in an effect column). cell.speed already covers every speed effect
+        // in either column.
+        func speedChange(_ cell: TCell) -> Int? { cell.speed }
         var startSpeed = max(1, m.initialSpeed)
         var startBPM = m.initialTempoBPM
         if let p = m.order.first(where: { $0 >= 0 && $0 < m.patterns.count }),

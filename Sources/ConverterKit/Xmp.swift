@@ -82,6 +82,8 @@ enum Xmp {
                     if offset >= 0 { cell.sampleOffset = Int(offset) } // 9xx → sliced-sample hint
                     let bpm = xmpb_ev_tempo(evP)
                     if bpm > 0 { cell.setTempoBPM = Double(bpm) }      // Fxx≥0x20 / Txx → tempo
+                    let spd = xmpb_ev_speed(evP)
+                    if spd > 0 { cell.speed = Int(spd) }              // speed in either column (incl. 669)
                     cell.fx1Type = Int(ev.fxt); cell.fx1Param = Int(ev.fxp)
                     cell.fx2Type = Int(ev.f2t); cell.fx2Param = Int(ev.f2p)
                     pattern[row][ch] = cell
@@ -170,6 +172,51 @@ enum Xmp {
                 if real.count > 1 { inst.samples = real }   // genuine multi-sample only
             }
             m.instruments.append(inst)
+        }
+
+        // FAR mid-song tempo. FAR stores tempo only as effects (a coarse→BPM table
+        // plus fine slides and a tempo "mode"), which libxmp resolves during
+        // playback, not in the events. Replay that state machine in play order and
+        // stamp the resulting BPM + speed onto each tempo-changing cell, using
+        // libxmp's own translator (xmpb_far_tempo). The DAWproject tempo map and a
+        // FAR-specific XRNS emitter both read setTempoBPM/speed. Fine slides are
+        // exact along a linear play-through; a pattern replayed at a different
+        // accumulated fine tempo is approximate (the pooled-pattern caveat).
+        if m.format.contains("Farandole") {
+            // FAR's initial coarse tempo isn't on the public struct, so recover it
+            // by matching the header BPM libxmp already computed (mode 1, no fine).
+            var coarse = 4
+            for c in 0...15 {
+                var f: Int32 = 0, s: Int32 = 0, b: Int32 = 0
+                if xmpb_far_tempo(1, 0, Int32(c), &f, &s, &b) == 0,
+                   Int(b) == Int(m.initialTempoBPM.rounded()) { coarse = c; break }
+            }
+            var fine: Int32 = 0, mode = 1
+            for op in m.order where op >= 0 && op < m.patterns.count {
+                for r in m.patterns[op].indices {
+                    for ch in m.patterns[op][r].indices {
+                        var fineChange: Int32 = 0
+                        switch m.patterns[op][r][ch].fx1Type {
+                        case 0x68:                                  // FX_FAR_TEMPO
+                            let p = m.patterns[op][r][ch].fx1Param
+                            if (p >> 4) != 0 { mode = (p >> 4) - 1 } else { coarse = p & 0x0F }
+                        case 0x69:                                  // FX_FAR_F_TEMPO (fine slide)
+                            let p = m.patterns[op][r][ch].fx1Param, hi = p >> 4, lo = p & 0x0F
+                            if hi != 0 { fine += Int32(hi); fineChange = Int32(hi) }
+                            else if lo != 0 { fine -= Int32(lo); fineChange = -Int32(lo) }
+                            else { fine = 0 }
+                        default: continue
+                        }
+                        var s: Int32 = 0, b: Int32 = 0
+                        if xmpb_far_tempo(Int32(mode), fineChange, Int32(coarse), &fine, &s, &b) == 0 {
+                            m.patterns[op][r][ch].setTempoBPM = Double(b)
+                            m.patterns[op][r][ch].speed = Int(s)        // keep fx1Type 0x68 as the XRNS marker
+                        } else {
+                            m.patterns[op][r][ch].fx1Type = 0           // tempo 0: unrepresentable, drop
+                        }
+                    }
+                }
+            }
         }
         return m
     }

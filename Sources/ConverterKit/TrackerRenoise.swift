@@ -125,15 +125,10 @@ enum TrackerRenoise {
         var speed = m.initialSpeed
         if let p = m.order.first(where: { $0 >= 0 && $0 < m.patterns.count }),
            let row0 = m.patterns[p].first {
-            for cell in row0 {
-                // FX_SPEED (0x0F) with param < 0x20 is speed (≥ that is tempo);
-                // FX_S3M_SPEED (0xA3) is always speed.
-                if (cell.fx1Type == 0x0F && cell.fx1Param >= 1 && cell.fx1Param < 0x20)
-                    || (cell.fx1Type == 0xA3 && cell.fx1Param >= 1) {
-                    speed = cell.fx1Param
-                    break
-                }
-            }
+            // The real start speed: a speed effect on the first played row (any
+            // format, either effect column — including 669's FX_SPEED_CP) overrides
+            // the header default, which for some formats is just a placeholder.
+            for cell in row0 where cell.speed != nil { speed = cell.speed!; break }
         }
         return max(1, min(256, speed))
     }
@@ -216,6 +211,15 @@ enum TrackerRenoise {
             }
             if let e2 = TrackerEffects.secondaryEffect(type: cell.fx2Type, param: cell.fx2Param, format: format) {
                 effects.append(e2)
+            }
+            // FAR mid-song tempo (resolved in Xmp.read's FAR pass): emit the
+            // computed BPM as ZT and speed as ZL. fx1Type 0x68 (FX_FAR_TEMPO) is
+            // kept only as the marker; TrackerEffects emits nothing for it.
+            if cell.fx1Type == 0x68, let bpm = cell.setTempoBPM {
+                effects.append(RNEffectColumn(number: "ZT", value: String(format: "%02X", min(255, max(32, Int(bpm))))))
+                if let sp = cell.speed {
+                    effects.append(RNEffectColumn(number: "ZL", value: String(format: "%02X", min(255, max(1, sp)))))
+                }
             }
 
             if hasColumn || !effects.isEmpty {

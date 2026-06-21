@@ -22,6 +22,16 @@ const struct xmp_event *xmpb_event(const struct xmp_module *m, int t, int row);
  *   S3M/IT Txx), else 0. */
 int xmpb_ev_offset(const struct xmp_event *e);
 int xmpb_ev_tempo(const struct xmp_event *e);
+/* FAR mid-song tempo: translate (mode, fine_change, coarse) to speed + bpm using
+ * libxmp's own stateful algorithm (the *fine accumulator is read/clamped/updated
+ * in place). FAR carries tempo only through effects, with a coarse→bpm table and
+ * fine slides, so we replay the state and call this per change. Returns 0 on ok. */
+int xmpb_far_tempo(int mode, int fine_change, int coarse, int *fine, int *speed, int *bpm);
+/* xmpb_ev_speed: ticks-per-row if this event sets the speed (via any of libxmp's
+ * speed effects, in either effect column), else 0. Some formats (notably 669,
+ * which hardcodes mod->bpm/spd) carry the real speed only as an effect, and not
+ * always in the first column — so detection must scan both. */
+int xmpb_ev_speed(const struct xmp_event *e);
 
 const char *xmpb_ins_name(const struct xmp_module *m, int i);
 int xmpb_sub_xpo(const struct xmp_module *m, int i);

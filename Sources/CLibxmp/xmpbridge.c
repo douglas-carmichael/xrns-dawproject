@@ -47,10 +47,38 @@ int xmpb_ev_offset(const struct xmp_event *e) {
 	return -1;
 }
 
-int xmpb_ev_tempo(const struct xmp_event *e) {
-	/* MOD Fxx with param >= 0x20 is tempo (BPM); below that it is speed
-	 * (ticks/row). S3M/IT Txx carries the BPM directly. */
-	if ((e->fxt == FX_SPEED || e->fxt == FX_S3M_BPM || e->fxt == FX_IT_BPM) && e->fxp >= 0x20) return e->fxp;
-	if ((e->f2t == FX_SPEED || e->f2t == FX_S3M_BPM || e->f2t == FX_IT_BPM) && e->f2p >= 0x20) return e->f2p;
+static int tempo_of(int t, int p) {
+	/* MOD Fxx >= 0x20 is tempo (BPM); below that it is speed. S3M/IT Txx is the
+	 * BPM directly. ULT FX_ULT_TEMPO splits at 0x30: 30-ff is BPM (CIA). */
+	if ((t == FX_SPEED || t == FX_S3M_BPM || t == FX_IT_BPM) && p >= 0x20) return p;
+	if (t == FX_ULT_TEMPO && p >= 0x30) return p;
 	return 0;
+}
+
+int xmpb_ev_tempo(const struct xmp_event *e) {
+	int t = tempo_of(e->fxt, e->fxp);
+	return t ? t : tempo_of(e->f2t, e->f2p);
+}
+
+static int speed_of(int t, int p) {
+	/* FX_SPEED is speed only below 0x20 (>= is tempo); the *_SPEED variants
+	 * (FX_SPEED_CP = 669, FX_ICE_SPEED, FX_S3M_SPEED) are always speed. ULT
+	 * FX_ULT_TEMPO is speed for 01-2f (BPM at 30+, handled by tempo_of). */
+	if (t == FX_SPEED && p >= 1 && p < 0x20) return p;
+	if ((t == FX_SPEED_CP || t == FX_ICE_SPEED || t == FX_S3M_SPEED) && p >= 1) return p;
+	if (t == FX_ULT_TEMPO && p >= 1 && p < 0x30) return p;
+	return 0;
+}
+
+int xmpb_ev_speed(const struct xmp_event *e) {
+	int s = speed_of(e->fxt, e->fxp);
+	if (s) return s;
+	return speed_of(e->f2t, e->f2p);
+}
+
+/* Defined in far_extras.c (compiled into this library). */
+extern int libxmp_far_translate_tempo(int mode, int fine_change, int coarse,
+                                       int *fine, int *_speed, int *_bpm);
+int xmpb_far_tempo(int mode, int fine_change, int coarse, int *fine, int *speed, int *bpm) {
+	return libxmp_far_translate_tempo(mode, fine_change, coarse, fine, speed, bpm);
 }

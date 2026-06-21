@@ -22,6 +22,25 @@ HANDOFF.txt
 *.pti
 *.mti
 *.xrns.zip
+# Other libxmp module formats (tested locally; third-party, never committed)
+*.669
+*.far
+*.ult
+*.ptm
+*.stm
+*.dbm
+*.imf
+*.gdm
+*.amf
+*.liq
+*.dsym
+*.okt
+*.med
+*.mdl
+*.ams
+*.dmf
+*.psm
+*.mt2
 # Polyend factory SD card content (third-party; used locally to validate the codecs)
 TrackerSD/
 # Renoise IT volume-column bug report (one-off deliverable, kept local)

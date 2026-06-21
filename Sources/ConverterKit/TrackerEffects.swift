@@ -26,6 +26,7 @@ enum TrackerEffects {
         static let offset = 0x09, volSlide = 0x0A, jump = 0x0B, volSet = 0x0C
         static let breakRow = 0x0D, extended = 0x0E, speed = 0x0F
         static let s3mArpeggio = 0xB4, itBPM = 0x87, s3mSpeed = 0xA3, trkVol = 0x80
+        static let ultTempo = 0x5F   // ULT: 01-2f = speed, 30-ff = BPM
     }
 
     /// The main (fx1) effect → one Renoise effect-column cell, or nil if it has no
@@ -63,6 +64,7 @@ enum TrackerEffects {
         case FX.speed:      return p >= 0x20 ? ec("ZT", p) : ec("ZL", p)
         case FX.itBPM:      return ec("ZT", p)
         case FX.s3mSpeed:   return ec("ZL", p)
+        case FX.ultTempo:   return p >= 0x30 ? ec("ZT", p) : (p >= 1 ? ec("ZL", p) : nil)
         case FX.trkVol:     return ec("0L", min(0xFF, p * 3))   // IT set-track-volume
         default:            return nil
         }
