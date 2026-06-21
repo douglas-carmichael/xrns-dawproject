@@ -85,32 +85,18 @@ struct Options {
 
 let usage = """
 xrnsdaw — convert between Renoise (.xrns), DAWproject (.dawproject), MIDI (.mid)
-and Polyend Tracker projects, and import legacy tracker modules (MOD, S3M, XM,
-IT, STM, 669, DBM, MED + ~50 more).
+and Polyend Tracker projects, and import ~50 tracker module formats.
 
 USAGE:
   xrnsdaw <input> [options]
 
 OPTIONS:
-  -o, --output <path>      Output file, or output folder for a Polyend target
-      --to <format>        Target: "xrns", "dawproject", "midi" or "polyend"
-      --lpb <n>            Lines/steps-per-beat grid for .xrns or Polyend targets
-                           (default: derived from tempo for .xrns; 4 for Polyend)
-      --layout <mode>      Legacy-module track layout: "channel" (faithful — one track per
-                           tracker channel, preserves channel effects + stereo) or "instrument"
-                           (one track per sound, best for mixing). Default: channel for .xrns,
-                           instrument for .dawproject/.mid.
-  -v, --verbose            Print a conversion summary
-  -h, --help               Show this help
-
-The source format is taken from the input extension; a folder (or project.mt) is a
-Polyend Tracker project, and any other non-round-trip extension is treated as a
-tracker module identified by content. The target is --to, else the -o extension,
-else: xrns/midi/module/polyend → dawproject (polyend/dawproject → xrns).
-
-A Polyend Tracker project is a folder (project.mt + patterns/ + instruments/ +
-samples/). Export quantises to the step grid and is monophonic per track; stereo
-samples are preserved (embedded as WAV in .xrns).
+  -o, --output <path>   Output file (or folder, for a Polyend target)
+      --to <format>     Target: xrns | dawproject | midi | polyend
+      --lpb <n>         Lines/steps-per-beat grid (.xrns and Polyend targets)
+      --layout <mode>   Module track layout: channel | instrument
+  -v, --verbose         Print a conversion summary
+  -h, --help            Show this help
 """
 
 func parseArguments(_ args: [String]) throws -> Options {
