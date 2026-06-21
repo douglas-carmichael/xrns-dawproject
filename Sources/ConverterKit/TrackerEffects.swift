@@ -26,6 +26,7 @@ enum TrackerEffects {
         static let offset = 0x09, volSlide = 0x0A, jump = 0x0B, volSet = 0x0C
         static let breakRow = 0x0D, extended = 0x0E, speed = 0x0F
         static let s3mArpeggio = 0xB4, itBPM = 0x87, s3mSpeed = 0xA3, trkVol = 0x80
+        static let multiRetrig = 0x1B, fineVibrato = 0xAC   // S3M Qxy retrig, Uxy fine vibrato
         static let ultTempo = 0x5F   // ULT: 01-2f = speed, 30-ff = BPM
     }
 
@@ -36,27 +37,34 @@ enum TrackerEffects {
         // IT/S3M fine & extra-fine porta live in the main effect (0xE0/0xF0 high
         // nibble); Renoise writes the plain low-nibble amount.
         func porta(_ n: String) -> RNEffectColumn { ec(n, fineFmt && p >= 0xE0 ? p & 0x0F : p) }
+        // A Dxy/Axy volume-slide parameter → Renoise fade in (0I) / fade out (0O).
+        // The F nibble marks an IT/S3M *fine* slide and picks the direction (DxF
+        // up, DFy down), so it must not be read as a large amount.
+        func volSlideFx(_ q: Int) -> RNEffectColumn? {
+            let up = q >> 4, dn = q & 0x0F
+            if fineFmt && dn == 0xF && up != 0 { return ec("0I", up << 4) }
+            if fineFmt && up == 0xF && dn != 0 { return ec("0O", dn << 4) }
+            return up > 0 ? ec("0I", up << 4) : ec("0O", dn << 4)
+        }
 
         switch type {
         case FX.arpeggio, FX.s3mArpeggio:
             return p == 0 ? nil : ec("0A", p)            // 00 = no arpeggio (not emitted)
         case FX.portaUp:    return porta("0U")
         case FX.portaDn:    return porta("0D")
-        case FX.tonePorta, FX.toneVSlide: return ec("0G", p)   // tone porta (+ vol slide) → glide
-        case FX.vibrato:    return ec("0V", p)
-        case FX.vibraVSlide: return nil                  // oracle emits no effect (vol part → vol col)
+        case FX.tonePorta:  return ec("0G", p)           // tone portamento → glide
+        case FX.toneVSlide:                              // Lxy: glide continues + volume slide
+            return format == "S3M" ? (p == 0 ? nil : volSlideFx(p)) : ec("0G", p)
+        case FX.vibrato, FX.fineVibrato: return ec("0V", p)   // (fine) vibrato → vibrato
+        case FX.vibraVSlide:                             // Kxy: vibrato continues + volume slide
+            // XM/IT carry the slide in the volume column (oracle emits no effect);
+            // S3M has no such column, so the slide must go in the effect column.
+            return format == "S3M" ? (p == 0 ? nil : volSlideFx(p)) : nil
         case FX.tremolo:    return ec("0O", p)
+        case FX.multiRetrig:                             // Qxy: retrigger note every y ticks
+            return format == "S3M" ? ec("0R", p & 0x0F) : nil
         case FX.offset:     return ec("0S", p)
-        case FX.volSlide:                                // up nibble → 0I (fade in), down → 0O (fade out)
-            let up = p >> 4, dn = p & 0x0F
-            // IT/S3M fine volume slides: the F nibble marks "fine" and chooses the
-            // direction — DxF = fine up by x (low nibble F), DFy = fine down by y
-            // (high nibble F). Without this the high F reads as a large up amount,
-            // so a fine fade-DOWN wrongly becomes a fast fade-IN.
-            if fineFmt && dn == 0xF && up != 0 { return ec("0I", up << 4) }   // DxF: fine up by x
-            if fineFmt && up == 0xF && dn != 0 { return ec("0O", dn << 4) }   // DFy: fine down by y
-            if up > 0 { return ec("0I", up << 4) }       // slide up
-            return ec("0O", dn << 4)                     // slide down (param 0 → 0O00 = continue)
+        case FX.volSlide:   return volSlideFx(p)         // Dxy/Axy → fade in / fade out
         case FX.jump:       return ec("0B", p)
         case FX.volSet:     return ec("0M", min(0xFF, p * 8))
         case FX.breakRow:   return ec("ZB", p)
