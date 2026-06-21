@@ -1,0 +1,5 @@
+module CLibxmp {
+    header "xmp.h"
+    header "xmpbridge.h"
+    export *
+}

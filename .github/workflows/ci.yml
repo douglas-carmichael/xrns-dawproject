@@ -1,0 +1,77 @@
+name: CI
+
+# Builds and tests on macOS, Linux and Windows, and — on a tag like
+# "xrnsdaw-v1.0" — publishes a prebuilt binary for each OS to a GitHub Release.
+# SwiftPM is the build system, so the commands are identical per OS.
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'xrnsdaw-v*' ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-test:
+    name: Build & test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ macos-latest, ubuntu-latest, windows-latest ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: SwiftyLab/setup-swift@latest
+        with:
+          swift-version: "6.0"
+      - name: Build (release)
+        run: swift build -c release
+      - name: Test
+        run: swift test
+
+  release:
+    name: Release (${{ matrix.os }})
+    needs: build-test
+    if: startsWith(github.ref, 'refs/tags/xrnsdaw-v')
+    permissions:
+      contents: write
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            asset: xrnsdaw-macos-arm64
+            static: ""
+          - os: ubuntu-latest
+            asset: xrnsdaw-linux-x86_64
+            static: "--static-swift-stdlib"
+          - os: windows-latest
+            asset: xrnsdaw-windows-x86_64
+            static: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: SwiftyLab/setup-swift@latest
+        with:
+          swift-version: "6.0"
+      - name: Build (release)
+        run: swift build -c release ${{ matrix.static }}
+      - name: Stage binary (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          cp .build/release/xrnsdaw "dist/${{ matrix.asset }}"
+      - name: Stage binary (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir dist
+          copy .build\release\xrnsdaw.exe dist\${{ matrix.asset }}.exe
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/*
+      - name: Attach to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*

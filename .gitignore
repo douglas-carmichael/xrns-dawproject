@@ -1,0 +1,7 @@
+# SwiftPM build output
+.build/
+.swiftpm/
+dist/
+
+# macOS
+.DS_Store
