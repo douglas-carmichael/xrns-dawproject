@@ -12,8 +12,9 @@ import CLibxmp
 
 public enum Verify {
 
-    /// libxmp's reference playback, sampled at each row start: (pattern, row, per-channel volume 0…64, per-channel note).
-    static func capture(_ data: Data, channels: Int) -> [(pattern: Int, row: Int, vol: [Int], note: [Int])] {
+    /// libxmp's reference playback, sampled at each row start: (pattern, row, per-channel
+    /// volume 0…64, per-channel note, and whether this row starts a new sub-song section).
+    static func capture(_ data: Data, channels: Int) -> [(pattern: Int, row: Int, vol: [Int], note: [Int], newSection: Bool)] {
         guard let ctx = xmp_create_context() else { return [] }
         defer { xmp_free_context(ctx) }
         var rc: Int32 = -1
@@ -22,18 +23,43 @@ public enum Verify {
         defer { xmp_release_module(ctx) }
         guard xmpb_play_start(ctx) == 0 else { return [] }
         defer { xmp_end_player(ctx) }
-        var out: [(Int, Int, [Int], [Int])] = []
-        var guardN = 0, lastKey = -1
-        while xmpb_play_frame(ctx) == 0 && xmpb_fi_loop() == 0 {
-            guardN += 1; if guardN > 2_000_000 { break }
-            if xmpb_fi_frame() != 0 { continue }        // sample at the first tick of each row
-            let pat = Int(xmpb_fi_pattern()), row = Int(xmpb_fi_row())
-            let key = pat * 4096 + row
-            if key == lastKey { continue }              // one sample per row, but keep repeats in order
-            lastKey = key
-            var v = [Int](repeating: 0, count: channels), n = [Int](repeating: -1, count: channels)
-            for ch in 0..<channels { v[ch] = Int(xmpb_fi_chvol(Int32(ch))); n[ch] = Int(xmpb_fi_chnote(Int32(ch))) }
-            out.append((pat, row, v, n))
+
+        // Sub-song sections: order positions split by 0xFF end markers. Multi-section
+        // S3M/IT (e.g. 2nd_skav) pack several sub-songs this way and libxmp plays only
+        // the first naturally, so seek to each remaining section with xmp_set_position to
+        // verify the whole song. Single-section modules collapse to one section [0, len).
+        let ordCount = Int(xmpb_ctx_order_count(ctx))
+        var sections: [(start: Int, end: Int)] = []
+        var s = 0
+        for i in 0..<max(0, ordCount) where Int(xmpb_ctx_order(ctx, Int32(i))) == 0xFF {
+            if i > s { sections.append((s, i)) }
+            s = i + 1
+        }
+        if s < ordCount { sections.append((s, ordCount)) }
+        if sections.isEmpty { sections = [(0, max(1, ordCount))] }
+
+        var out: [(Int, Int, [Int], [Int], Bool)] = []
+        for (si, sec) in sections.enumerated() {
+            if si > 0 { _ = xmpb_set_position(ctx, Int32(sec.start)) }
+            var guardN = 0, lastKey = -1, entered = false, firstRow = true, lastPos = -1
+            while xmpb_play_frame(ctx) == 0 {
+                guardN += 1; if guardN > 1_000_000 { break }
+                let pos = Int(xmpb_fi_pos())
+                if pos >= sec.start && pos < sec.end {
+                    if entered && pos < lastPos { break }   // looped back to the section start → one pass done
+                    entered = true; lastPos = pos
+                } else if entered { break }                  // advanced past the section (hit the 0xFF) → done
+                else { continue }                            // still settling after the seek
+                if xmpb_fi_frame() != 0 { continue }         // sample at the first tick of each row
+                let pat = Int(xmpb_fi_pattern()), row = Int(xmpb_fi_row())
+                let key = pat * 4096 + row
+                if key == lastKey { continue }               // one sample per row, but keep repeats in order
+                lastKey = key
+                var v = [Int](repeating: 0, count: channels), n = [Int](repeating: -1, count: channels)
+                for ch in 0..<channels { v[ch] = Int(xmpb_fi_chvol(Int32(ch))); n[ch] = Int(xmpb_fi_chnote(Int32(ch))) }
+                out.append((pat, row, v, n, firstRow))
+                firstRow = false
+            }
         }
         return out
     }
@@ -62,6 +88,10 @@ public enum Verify {
         var envCells = 0    // active cells on enveloped instruments — volume is envelope-driven, not model-checkable
         var gv = 64, gvSlide = 0, gvCells = 0   // global volume (0…64) and cells it explains
         for f in frames where f.pattern >= 0 && f.pattern < m.patterns.count {
+            if f.newSection {   // libxmp restarts every channel at a sub-song boundary
+                for ch in 0..<m.channels { active[ch] = false; cur[ch] = 0; curInst[ch] = -1; mem[ch] = 0 }
+                gv = 64; gvSlide = 0
+            }
             let pat = m.patterns[f.pattern]
             guard f.row < pat.count else { continue }
             // Global volume (XM Gxx/Hxy → 0x10 set / 0x11 slide) scales EVERY channel.

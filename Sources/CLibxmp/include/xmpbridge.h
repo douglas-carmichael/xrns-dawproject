@@ -71,6 +71,9 @@ int xmpb_env_val(const struct xmp_module *m, int i, int p);
  * the reference playback (per-row, per-channel volume and note). */
 int xmpb_play_start(xmp_context c);
 int xmpb_play_frame(xmp_context c);   /* advance one tick; caches frame info; <0 at end */
+int xmpb_set_position(xmp_context c, int pos);   /* seek to an order position (for sub-song sections) */
+int xmpb_ctx_order_count(xmp_context c);         /* raw order-list length (mod->len, includes 0xFF markers) */
+int xmpb_ctx_order(xmp_context c, int i);        /* raw order entry i (0xFF = sub-song end marker), -1 if oob */
 int xmpb_fi_pos(void);                /* order position of the cached frame */
 int xmpb_fi_pattern(void);            /* current pattern number */
 int xmpb_fi_row(void);                /* row within the pattern */

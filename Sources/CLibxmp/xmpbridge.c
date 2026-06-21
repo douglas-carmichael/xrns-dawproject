@@ -93,6 +93,15 @@ int xmpb_far_tempo(int mode, int fine_change, int coarse, int *fine, int *speed,
 static struct xmp_frame_info g_fi;
 int xmpb_play_start(xmp_context c) { return xmp_start_player(c, 44100, 0); }
 int xmpb_play_frame(xmp_context c) { int r = xmp_play_frame(c); xmp_get_frame_info(c, &g_fi); return r; }
+int xmpb_set_position(xmp_context c, int pos) { return xmp_set_position(c, pos); }
+int xmpb_ctx_order_count(xmp_context c) {
+	struct xmp_module_info mi; xmp_get_module_info(c, &mi);
+	return mi.mod ? mi.mod->len : 0;
+}
+int xmpb_ctx_order(xmp_context c, int i) {
+	struct xmp_module_info mi; xmp_get_module_info(c, &mi);
+	return (mi.mod && i >= 0 && i < mi.mod->len) ? mi.mod->xxo[i] : -1;
+}
 int xmpb_fi_pos(void)   { return g_fi.pos; }
 int xmpb_fi_pattern(void) { return g_fi.pattern; }
 int xmpb_fi_row(void)   { return g_fi.row; }
