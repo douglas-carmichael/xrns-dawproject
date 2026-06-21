@@ -5,3 +5,20 @@ dist/
 
 # macOS
 .DS_Store
+
+# Local session handoff notes (not for the repo)
+HANDOFF.txt
+
+# Test fixtures: tracker modules and Renoise reference ("oracle") conversions —
+# large and/or third-party copyrighted; kept local, never committed.
+*.xrns
+*.mod
+*.xm
+*.it
+*.s3m
+*.mtm
+*.mt
+*.mtp
+*.pti
+# Renoise IT volume-column bug report (one-off deliverable, kept local)
+renoise-it-volcol-bug-report.md

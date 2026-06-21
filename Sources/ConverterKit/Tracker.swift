@@ -30,6 +30,10 @@ struct TCell {
     var volume: Int?        // 0...64 volume column (nil = none)
     var sampleOffset: Int?  // 9xx/Oxx parameter (slices a multi-sound sample)
     var setTempoBPM: Double? // tempo (BPM) change triggered on this row
+    /// Raw libxmp effect columns (FX_* in effects.h). fx1 is the main effect,
+    /// fx2 the secondary (often an XM/IT volume-column effect). 0 type = none.
+    var fx1Type: Int = 0, fx1Param: Int = 0
+    var fx2Type: Int = 0, fx2Param: Int = 0
 }
 
 /// Instrument/sample metadata used for naming + classification (no audio).
@@ -61,6 +65,7 @@ struct TrackerModule {
     var channels: Int = 4
     var rowsPerBeat: Int = 4            // assumed grid (tracker convention: 4 rows/beat)
     var initialTempoBPM: Double = 125
+    var initialSpeed: Int = 6           // ticks per row (module "speed"); Renoise TicksPerLine
     var instruments: [TInstrument] = [] // index 0 == instrument 1
     var order: [Int] = []               // pattern indices, in play order
     var patterns: [[[TCell]]] = []      // [pattern][row][channel]

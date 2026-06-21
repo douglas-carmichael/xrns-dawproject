@@ -164,6 +164,33 @@ private func sanitizeRenoiseName(_ s: String) -> String {
     return capped.isEmpty ? "Sample" : capped
 }
 
+/// Pack a `RenoiseSong` into `.xrns` container bytes: Song.xml plus each
+/// instrument's sample audio embedded where Renoise locates it by folder
+/// convention (`SampleData/Instrument{NN} (name)/Sample00 (name).{ext}`).
+private func packRenoiseXrns(_ renoise: RenoiseSong) -> Data {
+    var entries: [(name: String, data: Data)] = [("Song.xml", Data(RenoiseWriter.write(renoise).utf8))]
+    for (i, inst) in renoise.instruments.enumerated() {
+        guard let s = inst.sample else { continue }
+        let dir = "SampleData/Instrument\(String(format: "%02d", i)) (\(sanitizeRenoiseName(inst.name)))"
+        entries.append(("\(dir)/Sample00 (\(sanitizeRenoiseName(s.name))).\(s.audioExt)", s.audio))
+    }
+    return Zip.create(entries: entries)
+}
+
+/// Count pitched note-ons across a Renoise song's pattern pool (for the verbose
+/// summary on the direct tracker→Renoise path).
+private func countNoteOns(_ renoise: RenoiseSong) -> Int {
+    var n = 0
+    for p in renoise.patterns {
+        for t in p.tracks {
+            for line in t.lines {
+                for col in line.noteColumns where col.note != nil && col.note != "OFF" { n += 1 }
+            }
+        }
+    }
+    return n
+}
+
 private func readIR(_ format: Format, _ data: Data, path: String?, layout: TrackLayout) throws -> IRSong {
     var stats = ConvertStats()
     switch format {
@@ -187,15 +214,7 @@ private func writeIR(_ format: Format, _ song: IRSong, lpb: Int?, stats: inout C
     switch format {
     case .xrns:
         let renoise = ToRenoise.fromIR(song, linesPerBeat: lpb, stats: &stats)
-        var entries: [(name: String, data: Data)] = [("Song.xml", Data(RenoiseWriter.write(renoise).utf8))]
-        // Embed each instrument's sample audio where Renoise expects it:
-        // SampleData/Instrument{NN decimal} (name)/Sample00 (name).wav
-        for (i, inst) in renoise.instruments.enumerated() {
-            guard let s = inst.sample else { continue }
-            let dir = "SampleData/Instrument\(String(format: "%02d", i)) (\(sanitizeRenoiseName(inst.name)))"
-            entries.append(("\(dir)/Sample00 (\(sanitizeRenoiseName(s.name))).\(s.audioExt)", s.audio))
-        }
-        return Zip.create(entries: entries)
+        return packRenoiseXrns(renoise)
     case .dawproject:
         stats.patternsOrClips = song.tracks.reduce(0) { $0 + $1.clips.filter { !$0.notes.isEmpty }.count }
         let (projectXML, metadataXML, files) = DawProjectWriter.write(song)
@@ -232,9 +251,26 @@ private func convert(_ opts: Options) throws {
     let layout = opts.layout ?? (target == .xrns ? .channel : .instrument)
 
     let inputData = try Data(contentsOf: opts.input)
-    let song = try readIR(source, inputData, path: opts.input.path, layout: layout)
     var stats = ConvertStats()
-    let outputData = writeIR(target, song, lpb: opts.linesPerBeat, stats: &stats)
+    var tempoMapPoints = 0
+    let outputData: Data
+
+    // Tracker module → Renoise, channel layout, no explicit grid: use the direct
+    // pattern-pooled path so the result matches Renoise's own module import (full
+    // pattern pool + sequence, native line counts, cell-for-cell). An explicit
+    // --lpb, the instrument layout, or any other target falls through to the IR.
+    if source == .module, target == .xrns, layout == .channel, opts.linesPerBeat == nil {
+        let renoise = TrackerRenoise.convert(try Xmp.read(inputData, path: opts.input.path))
+        stats.tracks = renoise.tracks.count
+        stats.patternsOrClips = renoise.patterns.count
+        stats.linesPerBeat = renoise.linesPerBeat
+        stats.notes = countNoteOns(renoise)
+        outputData = packRenoiseXrns(renoise)
+    } else {
+        let song = try readIR(source, inputData, path: opts.input.path, layout: layout)
+        outputData = writeIR(target, song, lpb: opts.linesPerBeat, stats: &stats)
+        tempoMapPoints = song.tempoMap.count
+    }
     try outputData.write(to: output)
     print("Wrote \(output.lastPathComponent)  (\(source.label) → \(target.label))")
 
@@ -254,7 +290,7 @@ private func convert(_ opts: Options) throws {
         case .midi, .module:
             break
         }
-        if !song.tempoMap.isEmpty { print("  tempo map: \(song.tempoMap.count) points") }
+        if tempoMapPoints > 0 { print("  tempo map: \(tempoMapPoints) points") }
         if stats.droppedNotes > 0 {
             print("  dropped:  \(stats.droppedNotes) notes (exceeded 12-column polyphony)")
         }

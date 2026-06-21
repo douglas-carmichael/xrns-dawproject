@@ -235,9 +235,17 @@ enum Pitch {
 
     /// Render a MIDI key as a 3-character Renoise note token, e.g. 60 -> "C-4".
     static func renoiseName(fromMidi key: Int) -> String {
-        let value = min(119, max(0, key - renoiseToMidiOffset))
-        let octave = value / 12
-        let name = names[value % 12]
+        renoiseName(fromValue: key - renoiseToMidiOffset)
+    }
+
+    /// Render a raw Renoise note value (the value stored in Song.xml, C-0 == 0)
+    /// as a 3-character token, e.g. 48 -> "C-4". Tracker cells carry this value
+    /// directly (libxmp note − 13), so the tracker→Renoise writer can emit notes
+    /// untransposed — matching how Renoise's own module import writes them.
+    static func renoiseName(fromValue value: Int) -> String {
+        let v = min(119, max(0, value))
+        let octave = v / 12
+        let name = names[v % 12]
         return name.count == 1 ? "\(name)-\(octave)" : "\(name)\(octave)"
     }
 }

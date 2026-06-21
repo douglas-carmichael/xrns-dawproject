@@ -42,10 +42,18 @@ enum Xmp {
         m.channels = max(1, Int(mod.chn))
         m.channelPans = (0..<m.channels).map { Double(xmpb_chn_pan(modP, Int32($0))) / 255.0 }
         m.initialTempoBPM = mod.bpm >= 32 ? Double(mod.bpm) : 125
-        m.order = (0..<Int(mod.len)).compactMap {
-            let o = Int(xmpb_order(modP, Int32($0)))
-            return (o >= 0 && o < Int(mod.pat)) ? o : nil
+        m.initialSpeed = max(1, Int(mod.spd))
+        // Walk the order list, honouring S3M/IT separators: 0xFF ("---") ends the
+        // song (stop), 0xFE ("+++") is a skip (ignore, continue). Renoise does the
+        // same, so entries after the end marker don't become bogus sequence slots.
+        var order: [Int] = []
+        for i in 0..<Int(mod.len) {
+            let o = Int(xmpb_order(modP, Int32(i)))
+            if o == 0xFF { break }            // XMP_MARK_END
+            if o == 0xFE { continue }         // XMP_MARK_SKIP
+            if o >= 0 && o < Int(mod.pat) { order.append(o) }
         }
+        m.order = order
 
         for p in 0..<Int(mod.pat) {
             let rows = Int(xmpb_pat_rows(modP, Int32(p)))
@@ -74,6 +82,8 @@ enum Xmp {
                     if offset >= 0 { cell.sampleOffset = Int(offset) } // 9xx → sliced-sample hint
                     let bpm = xmpb_ev_tempo(evP)
                     if bpm > 0 { cell.setTempoBPM = Double(bpm) }      // Fxx≥0x20 / Txx → tempo
+                    cell.fx1Type = Int(ev.fxt); cell.fx1Param = Int(ev.fxp)
+                    cell.fx2Type = Int(ev.f2t); cell.fx2Param = Int(ev.f2p)
                     pattern[row][ch] = cell
                 }
             }
@@ -154,9 +164,12 @@ enum Xmp {
     private static func shortType(_ t: String) -> String {
         let s = t.lowercased()
         if s.contains("protracker") || s.contains("noisetracker") || s.contains("soundtracker") || s.contains("startrekker") { return "MOD" }
-        if s.contains("fast tracker") || s.contains("ft2") { return "XM" }
-        if s.contains("scream tracker") { return "S3M" }
-        if s.contains("impulse") { return "IT" }
+        // ModPlug/OpenMPT/Schism name the saved format as a token in the type
+        // string, e.g. "ModPlug Tracker 1.16 IT 2.14" — match that, not just the
+        // authoring tracker, so a ModPlug-saved IT is still classed as IT.
+        if s.contains("impulse") || s.contains(" it ") || s.hasSuffix(" it") { return "IT" }
+        if s.contains("fast tracker") || s.contains("fasttracker") || s.contains("ft2") || s.contains(" xm") { return "XM" }
+        if s.contains("scream tracker") || s.contains(" s3m") { return "S3M" }
         if s.contains("octamed") || s.hasPrefix("med") { return "MED" }
         if s.contains("digibooster") { return "DBM" }
         if s.contains("composer 669") || s.contains("unis 669") { return "669" }

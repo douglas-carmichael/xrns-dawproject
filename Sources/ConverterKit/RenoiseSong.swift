@@ -48,6 +48,7 @@ struct RNTrack {
     var muted: Bool = false
     var soloed: Bool = false
     var visibleNoteColumns: Int = 1
+    var visibleEffectColumns: Int = 1
 }
 
 /// One sample inside a Renoise instrument. The audio is embedded in the .xrns
@@ -394,7 +395,7 @@ enum RenoiseWriter {
         for _ in 0..<12 { names.element("NoteColumnName") }
 
         el.leaf("NumberOfVisibleNoteColumns", String(max(1, min(12, t.visibleNoteColumns))))
-        el.leaf("NumberOfVisibleEffectColumns", "1")
+        el.leaf("NumberOfVisibleEffectColumns", String(max(1, min(8, t.visibleEffectColumns))))
         el.leaf("VolumeColumnIsVisible", "true")
         el.leaf("PanningColumnIsVisible", "true")
         el.leaf("DelayColumnIsVisible", "false")
