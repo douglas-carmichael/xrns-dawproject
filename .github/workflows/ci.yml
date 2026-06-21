@@ -18,7 +18,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ macos-latest, ubuntu-latest, windows-latest ]
+        # windows-2022 (not windows-latest): the Swift 6.0.x toolchain's clang
+        # can't build the ucrt/_Builtin_intrinsics modules against the newer
+        # VS2025 SDK that windows-latest is migrating to.
+        os: [ macos-latest, ubuntu-latest, windows-2022 ]
     steps:
       - uses: actions/checkout@v4
       - uses: SwiftyLab/setup-swift@latest
@@ -46,7 +49,7 @@ jobs:
           - os: ubuntu-latest
             asset: xrnsdaw-linux-x86_64
             static: "--static-swift-stdlib"
-          - os: windows-latest
+          - os: windows-2022
             asset: xrnsdaw-windows-x86_64
             static: ""
     steps:
