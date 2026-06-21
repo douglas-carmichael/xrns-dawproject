@@ -169,6 +169,8 @@ enum TrackerRenoise {
         // resolve: porta up (01) and porta down (02) share libxmp's freq memory;
         // volume slide (0A) keeps its own. (Glide/vibrato use Renoise's own memory.)
         func memorySlot(_ t: Int) -> Int? { (t == 0x01 || t == 0x02) ? 0x01 : (t == 0x0A ? 0x0A : nil) }
+        let fineFmt = (format == "IT" || format == "S3M")
+        var curVol = 64   // running channel volume (0…64), for simulating fine volume slides
         for r in 0..<min(rows, pattern.count) {
             let row = pattern[r]
             guard ch < row.count else { continue }
@@ -225,7 +227,24 @@ enum TrackerRenoise {
             if let k2 = memorySlot(cell.fx2Type) {
                 if fx2p != 0 { slideMemory[k2] = fx2p } else { fx2p = slideMemory[k2] ?? 0 }
             }
-            if let e = TrackerEffects.effectColumn(type: cell.fx1Type, param: fx1p, format: format) {
+            // IT/S3M fine volume slide (DxF up / DFy down) nudges the volume by a
+            // small amount ONCE per row. Renoise's per-tick fade can't express that
+            // (its slowest is +1/tick ≈ +6/row), so a gentle fine swell becomes a
+            // runaway "foghorn". Simulate the running volume and write it to the
+            // volume column instead of a fade effect.
+            if let v = cell.volume { curVol = v - 1 }
+            var fineVolSlide = false
+            if fineFmt && cell.fx1Type == 0x0A {
+                let up = fx1p >> 4, dn = fx1p & 0x0F
+                let amt = (dn == 0xF && up != 0) ? up : (up == 0xF && dn != 0 ? -dn : 0)
+                if amt != 0 {
+                    curVol = max(0, min(64, curVol + amt))
+                    nc.volume = String(format: "%02X", curVol * 2)
+                    hasColumn = true
+                    fineVolSlide = true
+                }
+            }
+            if !fineVolSlide, let e = TrackerEffects.effectColumn(type: cell.fx1Type, param: fx1p, format: format) {
                 effects.append(e)
             }
             if let e2 = TrackerEffects.secondaryEffect(type: cell.fx2Type, param: fx2p, format: format) {
