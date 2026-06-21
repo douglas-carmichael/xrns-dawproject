@@ -86,10 +86,36 @@ enum Tracker {
     /// Convert a parsed module to a composer-friendly IR song, in the requested
     /// track layout (see `TrackLayout`).
     static func toIR(_ m: TrackerModule, layout: TrackLayout = .instrument) -> IRSong {
-        let rpb = Double(max(1, m.rowsPerBeat))
         var song = IRSong()
         song.title = m.title.isEmpty ? nil : m.title
-        song.gridLinesPerBeat = m.rowsPerBeat   // 1 tracker row → 1 Renoise line (LPB = rows/beat)
+
+        // A speed/tempo effect on the first played row sets the effective start
+        // values (the header speed is only a default).
+        func speedChange(_ cell: TCell) -> Int? {
+            if cell.fx1Type == 0x0F, cell.fx1Param >= 1, cell.fx1Param < 0x20 { return cell.fx1Param }
+            if cell.fx1Type == 0xA3, cell.fx1Param >= 1 { return cell.fx1Param }   // S3M/IT speed
+            return nil
+        }
+        var startSpeed = max(1, m.initialSpeed)
+        var startBPM = m.initialTempoBPM
+        if let p = m.order.first(where: { $0 >= 0 && $0 < m.patterns.count }),
+           let firstRow = m.patterns[p].first {
+            for cell in firstRow {
+                if let sp = speedChange(cell) { startSpeed = sp }
+                if let bpm = cell.setTempoBPM { startBPM = bpm }
+            }
+        }
+        // Rows per beat: 4 at the classic speed 6. A faster speed (< 6) means finer
+        // rows, so use proportionally more rows/beat to keep the musical tempo ≈ the
+        // tracker BPM; a slower speed (> 6) keeps 4 rows/beat and lowers the tempo.
+        // This makes DAWproject/MIDI tempos match the song, not the raw tracker BPM.
+        let rpb = 24.0 / Double(min(6, startSpeed))
+        song.gridLinesPerBeat = max(1, Int(rpb.rounded()))
+
+        // musical BPM = 24·BPM / (rowsPerBeat·speed): equals the tracker BPM at the
+        // start; mid-song speed changes scale it. The direct Renoise path keeps raw
+        // BPM + TicksPerLine=speed and is unaffected.
+        func musicalBPM(_ bpm: Double, _ speed: Int) -> Double { 24.0 * bpm / (rpb * Double(max(1, speed))) }
 
         struct Open { var startBeat: Double; var key: Int; var velocity: Double; var instrument: Int; var offset: Int }
         struct ParsedNote { var channel: Int; var instrument: Int; var note: IRNote }
@@ -101,7 +127,9 @@ enum Tracker {
         var offsetsUsed: [Int: Set<Int>] = [:]
         var open = [Open?](repeating: nil, count: m.channels)
         var lastInstrument = [Int](repeating: 0, count: m.channels)
-        var tempoEvents = [IRTempoPoint(time: 0, bpm: m.initialTempoBPM)]
+        var curBPM = startBPM
+        var curSpeed = startSpeed
+        var tempoEvents = [IRTempoPoint(time: 0, bpm: musicalBPM(curBPM, curSpeed))]
 
         func close(_ o: Open, channel: Int, at endBeat: Double) {
             let length = max(1.0 / rpb, endBeat - o.startBeat)
@@ -119,7 +147,14 @@ enum Tracker {
                 let rowBeat = beatOffset + Double(r) / rpb
                 for ch in 0..<min(m.channels, row.count) {
                     let cell = row[ch]
-                    if let bpm = cell.setTempoBPM { tempoEvents.append(IRTempoPoint(time: rowBeat, bpm: bpm)) }
+                    if let sp = speedChange(cell) {
+                        curSpeed = sp
+                        tempoEvents.append(IRTempoPoint(time: rowBeat, bpm: musicalBPM(curBPM, curSpeed)))
+                    }
+                    if let bpm = cell.setTempoBPM {
+                        curBPM = bpm
+                        tempoEvents.append(IRTempoPoint(time: rowBeat, bpm: musicalBPM(curBPM, curSpeed)))
+                    }
                     if let inst = cell.instrument { lastInstrument[ch] = inst }
                     guard cell.note != nil || cell.noteOff else { continue }
 
@@ -196,7 +231,8 @@ enum Tracker {
         }
 
         let deduped = dedupTempo(tempoEvents)
-        if deduped.count > 1 { song.setTempoMap(deduped) } else { song.tempo = m.initialTempoBPM }
+        if deduped.count > 1 { song.setTempoMap(deduped) }
+        else { song.tempo = musicalBPM(startBPM, startSpeed) }
         return song
     }
 
