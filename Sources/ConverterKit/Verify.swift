@@ -83,6 +83,7 @@ public enum Verify {
         var cur = [Int](repeating: 0, count: m.channels)
         var active = [Bool](repeating: false, count: m.channels)
         var mem = [Int](repeating: 0, count: m.channels)
+        var qmem = [Int](repeating: 0, count: m.channels)   // Qxy retrigger param memory
         var curInst = [Int](repeating: -1, count: m.channels)
         var curSpeed = speed   // ticks/row, tracked through mid-song speed changes
         var div: [(pat: Int, row: Int, ch: Int, mine: Int, lib: Int, myNote: Int, libNote: Int)] = []
@@ -153,6 +154,21 @@ public enum Verify {
                     else if fineFmt && up == 0xF && dn != 0 { cur[ch] = max(0, cur[ch] - dn) }
                     else if up > 0 { regSlide = up * curSpeed }
                     else if dn > 0 { regSlide = -dn * curSpeed }
+                }
+                // Qxy retrigger volume change, modelled to match the converter's fade
+                // approximation (0I/0O ≈ amt per tick): the same amt-per-tick slide.
+                if active[ch] && cell.fx1Type == 0x1B {
+                    var p = cell.fx1Param
+                    if p != 0 { qmem[ch] = p } else { p = qmem[ch] }
+                    let x = p >> 4
+                    let amt: Int
+                    switch x {
+                    case 0x1, 0x9: amt = 1;  case 0x2, 0xA: amt = 2;  case 0x3, 0xB: amt = 4
+                    case 0x4, 0xC: amt = 8;  case 0x5, 0xD: amt = 16
+                    case 0x6, 0xE: amt = 8;  case 0x7, 0xF: amt = 16
+                    default:       amt = 0
+                    }
+                    if x >= 9 { regSlide = amt * curSpeed } else if x != 0 && x != 8 { regSlide = -amt * curSpeed }
                 }
                 let mine = active[ch] ? cur[ch] : 0
                 let lib = Int((Double(f.vol[ch]) * scale).rounded())

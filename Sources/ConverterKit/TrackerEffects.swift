@@ -64,8 +64,21 @@ enum TrackerEffects {
             // S3M and MOD have no such column, so the slide must go in the effect column.
             return (format == "S3M" || format == "MOD") ? (p == 0 ? nil : volSlideFx(p)) : nil
         case FX.tremolo:    return ec("0O", p)
-        case FX.multiRetrig:                             // Qxy: retrigger note every y ticks
-            return format == "S3M" ? ec("0R", p & 0x0F) : nil
+        case FX.multiRetrig:                             // Qxy/Rxy: retrigger every y ticks; x = volume change
+            let x = p >> 4
+            if x == 0 || x == 8 { return ec("0R", p & 0x0F) }   // no volume change → plain retrigger
+            // x is a per-retrigger volume change (1-7 down incl. ×2/3, ×1/2; 9-F up
+            // incl. ×3/2, ×2). Renoise's retrigger can't scale volume, so approximate
+            // the swell/decay as a fade (the audible dynamic; the rapid re-articulation
+            // is dropped). Exact rate can't match a multiplicative change — a best effort.
+            let amt: Int
+            switch x {
+            case 0x1, 0x9: amt = 1;  case 0x2, 0xA: amt = 2;  case 0x3, 0xB: amt = 4
+            case 0x4, 0xC: amt = 8;  case 0x5, 0xD: amt = 16
+            case 0x6, 0xE: amt = 8;  case 0x7, 0xF: amt = 16
+            default:       amt = 0
+            }
+            return ec(x >= 9 ? "0I" : "0O", min(0xFF, amt << 4))
         case FX.offset:     return ec("0S", p)
         case FX.volSlide:   return volSlideFx(p)         // Dxy/Axy → fade in / fade out
         case FX.jump:       return ec("0B", p)
