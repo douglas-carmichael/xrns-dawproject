@@ -47,10 +47,16 @@ enum TrackerEffects {
         case FX.vibraVSlide: return nil                  // oracle emits no effect (vol part → vol col)
         case FX.tremolo:    return ec("0O", p)
         case FX.offset:     return ec("0S", p)
-        case FX.volSlide:                                // up nibble → 0I, down → 0O; 0 = continue (0O)
+        case FX.volSlide:                                // up nibble → 0I (fade in), down → 0O (fade out)
             let up = p >> 4, dn = p & 0x0F
-            if up > 0 { return ec("0I", up << 4) }
-            return ec("0O", dn << 4)
+            // IT/S3M fine volume slides: the F nibble marks "fine" and chooses the
+            // direction — DxF = fine up by x (low nibble F), DFy = fine down by y
+            // (high nibble F). Without this the high F reads as a large up amount,
+            // so a fine fade-DOWN wrongly becomes a fast fade-IN.
+            if fineFmt && dn == 0xF && up != 0 { return ec("0I", up << 4) }   // DxF: fine up by x
+            if fineFmt && up == 0xF && dn != 0 { return ec("0O", dn << 4) }   // DFy: fine down by y
+            if up > 0 { return ec("0I", up << 4) }       // slide up
+            return ec("0O", dn << 4)                     // slide down (param 0 → 0O00 = continue)
         case FX.jump:       return ec("0B", p)
         case FX.volSet:     return ec("0M", min(0xFF, p * 8))
         case FX.breakRow:   return ec("ZB", p)
