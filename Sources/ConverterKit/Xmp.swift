@@ -38,10 +38,17 @@ enum Xmp {
         let mod = mut.pointee
 
         var m = TrackerModule(format: shortType(String(cString: xmpb_mod_type(modP))))
+        // libxmp scales playback by a per-format time_factor (default 10); a few
+        // formats express tempo in numbers calibrated for a different one, so the
+        // BPM must be normalised to the default-10 scale that Renoise and the
+        // DAWproject assume. FAR uses 4.01373, MED/MMD use 2.64 (libxmp common.h);
+        // every other format is already on the 10 scale (timeScale 1).
+        let timeScale: Double = m.format.contains("Farandole") ? 10.0 / 4.01373
+                              : (m.format.contains("MED") ? 10.0 / 2.64 : 1.0)
         m.title = String(cString: xmpb_mod_name(modP)).trimmingCharacters(in: .whitespacesAndNewlines)
         m.channels = max(1, Int(mod.chn))
         m.channelPans = (0..<m.channels).map { Double(xmpb_chn_pan(modP, Int32($0))) / 255.0 }
-        m.initialTempoBPM = mod.bpm >= 32 ? Double(mod.bpm) : 125
+        m.initialTempoBPM = (mod.bpm >= 32 ? Double(mod.bpm) : 125) * timeScale
         m.initialSpeed = max(1, Int(mod.spd))
         // Walk the order list, honouring S3M/IT separators: 0xFF ("---") ends the
         // song (stop), 0xFE ("+++") is a skip (ignore, continue). Renoise does the
@@ -81,7 +88,7 @@ enum Xmp {
                     let offset = xmpb_ev_offset(evP)
                     if offset >= 0 { cell.sampleOffset = Int(offset) } // 9xx → sliced-sample hint
                     let bpm = xmpb_ev_tempo(evP)
-                    if bpm > 0 { cell.setTempoBPM = Double(bpm) }      // Fxx≥0x20 / Txx → tempo
+                    if bpm > 0 { cell.setTempoBPM = Double(bpm) * timeScale }  // Fxx≥0x20 / Txx → tempo
                     let spd = xmpb_ev_speed(evP)
                     if spd > 0 { cell.speed = Int(spd) }              // speed in either column (incl. 669)
                     cell.fx1Type = Int(ev.fxt); cell.fx1Param = Int(ev.fxp)
@@ -209,7 +216,7 @@ enum Xmp {
                         }
                         var s: Int32 = 0, b: Int32 = 0
                         if xmpb_far_tempo(Int32(mode), fineChange, Int32(coarse), &fine, &s, &b) == 0 {
-                            m.patterns[op][r][ch].setTempoBPM = Double(b)
+                            m.patterns[op][r][ch].setTempoBPM = Double(b) * timeScale
                             m.patterns[op][r][ch].speed = Int(s)        // keep fx1Type 0x68 as the XRNS marker
                         } else {
                             m.patterns[op][r][ch].fx1Type = 0           // tempo 0: unrepresentable, drop
