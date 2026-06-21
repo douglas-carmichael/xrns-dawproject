@@ -99,7 +99,7 @@ final class PolyendTests: XCTestCase {
         let inst = PolyendInstrument.create(name: "kick", pcm: pcm, channels: 1)
 
         let bytes = PolyendInstrument.write(inst)
-        XCTAssertEqual(bytes.count, 16 + 374 + pcm.count * 2 + 4) // 410
+        XCTAssertEqual(bytes.count, 16 + 372 + pcm.count * 2 + 4) // 408
 
         let q = try PolyendInstrument.parse(bytes)
         XCTAssertEqual(q.header.idFile, "TI")
@@ -127,9 +127,56 @@ final class PolyendTests: XCTestCase {
     func testInstrumentEmptySample() throws {
         let inst = PolyendInstrument.create(name: "empty")
         let bytes = PolyendInstrument.write(inst)
-        XCTAssertEqual(bytes.count, 16 + 374 + 4)
+        XCTAssertEqual(bytes.count, 16 + 372 + 4)
         let q = try PolyendInstrument.parse(bytes)
         XCTAssertEqual(q.sample.length, 0)
         XCTAssertTrue(q.pcm.isEmpty)
+    }
+
+    // MARK: - IR bridge (IR → Polyend → IR)
+
+    func testBridgeRoundTrip() {
+        // Notes on a 4-steps/beat grid, monophonic per track, so the lossy export
+        // (quantise + note-off durations) round-trips cleanly back to the IR.
+        var song = IRSong()
+        song.tempo = 120
+        song.title = "Test"
+        var lead = IRTrack(role: .regular, name: "Lead")
+        lead.clips = [IRClip(start: 0, length: 4, name: nil, notes: [
+            IRNote(start: 0, length: 1, key: 60, velocity: 1.0, instrument: 0),
+            IRNote(start: 1, length: 1, key: 64, velocity: 0.5, instrument: 0),
+            IRNote(start: 2, length: 1, key: 67, velocity: 1.0, instrument: 0),
+        ])]
+        var bass = IRTrack(role: .regular, name: "Bass")
+        bass.clips = [IRClip(start: 0, length: 4, name: nil, notes: [
+            IRNote(start: 0, length: 2, key: 36, velocity: 1.0, instrument: 1),
+        ])]
+        song.tracks = [lead, bass]
+
+        let spb = 4
+        let export = PolyendSong.fromIR(song, stepsPerBeat: spb)
+        XCTAssertEqual(export.dropped, 0)
+        XCTAssertEqual(export.project.values.globalTempo, 120, accuracy: 0.01)
+        XCTAssertEqual(export.project.values.trackNames[0], "Lead")
+
+        var patterns: [Int: PatternData] = [:]
+        for p in export.patterns { patterns[p.num] = p.pattern }
+        let back = PolyendSong.toIR(project: export.project, patterns: patterns, instruments: [], stepsPerBeat: spb)
+
+        XCTAssertEqual(back.tempo, 120, accuracy: 0.01)
+        XCTAssertEqual(back.regularTracks.count, 2)
+
+        let leadNotes = back.regularTracks[0].absoluteNotes
+        XCTAssertEqual(leadNotes.count, 3)
+        XCTAssertEqual(leadNotes.map { $0.key }, [60, 64, 67])
+        XCTAssertEqual(leadNotes[0].start, 0, accuracy: 0.001)
+        XCTAssertEqual(leadNotes[1].start, 1, accuracy: 0.001)
+        XCTAssertEqual(leadNotes[1].velocity, 0.5, accuracy: 0.01)   // velocity via Volume FX
+        XCTAssertEqual(leadNotes[0].instrument, 0)
+
+        let bassNotes = back.regularTracks[1].absoluteNotes
+        XCTAssertEqual(bassNotes.count, 1)
+        XCTAssertEqual(bassNotes[0].key, 36)
+        XCTAssertEqual(bassNotes[0].length, 2, accuracy: 0.001)      // note-off preserved the 2-beat span
     }
 }

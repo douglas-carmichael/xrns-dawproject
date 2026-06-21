@@ -118,11 +118,13 @@ enum DawProjectWriter {
             var cursor = song.lengthInBeats + 4.0          // start a bar past the song
             let bpm = max(1, song.tempo)
             for (i, s) in song.extractedSamples.enumerated() {
-                let seconds = Double(s.pcm.count) / Double(max(1, s.sampleRate))
+                let frames = s.pcm.count / max(1, s.channels)
+                let seconds = Double(frames) / Double(max(1, s.sampleRate))
                 let durationBeats = max(0.25, seconds * bpm / 60.0)
                 let path = "samples/\(String(format: "%02d", i + 1))_\(sanitize(s.name)).wav"
-                embeddedFiles.append((path, Wav.encode(s.pcm, sampleRate: s.sampleRate, rootKey: s.rootKey,
-                                                       loopStart: s.loopStart, loopEnd: s.loopEnd, loopType: s.loopType)))
+                embeddedFiles.append((path, Wav.encode(s.pcm, sampleRate: s.sampleRate, channels: s.channels,
+                                                       rootKey: s.rootKey, loopStart: s.loopStart,
+                                                       loopEnd: s.loopEnd, loopType: s.loopType)))
                 let clip = clips.element("Clip")
                     .attr("time", dpNum(cursor))
                     .attr("duration", dpNum(durationBeats))

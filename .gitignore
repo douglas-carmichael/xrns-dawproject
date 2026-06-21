@@ -20,5 +20,9 @@ HANDOFF.txt
 *.mt
 *.mtp
 *.pti
+*.mti
+*.xrns.zip
+# Polyend factory SD card content (third-party; used locally to validate the codecs)
+TrackerSD/
 # Renoise IT volume-column bug report (one-off deliverable, kept local)
 renoise-it-volcol-bug-report.md

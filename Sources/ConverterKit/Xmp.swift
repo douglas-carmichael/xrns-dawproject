@@ -111,8 +111,13 @@ enum Xmp {
                               : ((flg & Int(XMP_SAMPLE_LOOP_REVERSE)) != 0 ? 2 : 0)
                 inst.loopStart = Int(xmpb_smp_lps(modP, Int32(sid)))
                 inst.loopEnd = Int(xmpb_smp_lpe(modP, Int32(sid)))
+                let stereo = (flg & Int(XMP_SAMPLE_STEREO)) != 0
+                inst.channels = stereo ? 2 : 1
                 if len > 0, (flg & Int(XMP_SAMPLE_SYNTH)) == 0, let dp = xmpb_smp_data(modP, Int32(sid)) {
-                    inst.pcm = decodePCM(dp, len: len, sixteenBit: (flg & Int(XMP_SAMPLE_16BIT)) != 0)
+                    // libxmp stereo data is interleaved L/R; `len` is in frames,
+                    // so a stereo sample holds len*2 16-bit values.
+                    inst.pcm = decodePCM(dp, len: stereo ? len * 2 : len,
+                                         sixteenBit: (flg & Int(XMP_SAMPLE_16BIT)) != 0)
                 }
             }
             m.instruments.append(inst)

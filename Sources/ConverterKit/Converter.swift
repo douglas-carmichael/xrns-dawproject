@@ -349,9 +349,12 @@ enum ToRenoise {
         guard let s = sample, !s.pcm.isEmpty else { return RNInstrument(name: name) }
         let looped = s.loopEnd > s.loopStart && s.loopEnd > 0
         let modes = ["Forward", "PingPong", "Backward"]
-        // FLAC, like Renoise's own samples — smaller than WAV and read natively.
-        let audio = Flac.encode(s.pcm, sampleRate: s.sampleRate)
-        let sm = RNSample(name: s.name, audio: audio, audioExt: "flac",
+        // Mono → FLAC (compact, like Renoise's own samples). Stereo → WAV, since
+        // our FLAC encoder is mono-only and Renoise reads stereo WAV natively.
+        let (audio, audioExt): (Data, String) = s.channels == 2
+            ? (Wav.encode(s.pcm, sampleRate: s.sampleRate, channels: 2), "wav")
+            : (Flac.encode(s.pcm, sampleRate: s.sampleRate), "flac")
+        let sm = RNSample(name: s.name, audio: audio, audioExt: audioExt,
                           volume: 1.0, transpose: 0,
                           baseNote: s.rootKey - 12,                  // Renoise note = MIDI − 12
                           loopMode: looped ? modes[min(2, max(0, s.loopType))] : "Off",

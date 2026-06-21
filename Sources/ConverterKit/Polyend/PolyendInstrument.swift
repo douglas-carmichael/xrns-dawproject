@@ -66,17 +66,21 @@ enum PolyendInstrument {
         let overdrive = Float(r.u8()) / 100
         let bitdepth = r.u8()
         r.skip(1) // reserved
-        r.skip(2) // final padding — kept symmetric with write (the TS omits it on read, its off-by-2)
 
-        // Remaining bytes (minus the trailing CRC) are the sample PCM.
+        // Remaining bytes (minus an optional trailing CRC) are the sample PCM.
+        // For a project .mti this region is empty (audio lives in samples/*.wav);
+        // some firmware writes a 4-byte CRC after the fields (392-byte .mti) and
+        // some omits it (388-byte .mti) — both occur in factory content.
         let audioOffset = r.offset
-        let rawLen = max(0, fileSize - InstrumentConstants.crcSize - audioOffset)
+        let trailing = fileSize - audioOffset
+        let hasCrc = trailing >= InstrumentConstants.crcSize
+        let rawLen = hasCrc ? trailing - InstrumentConstants.crcSize : max(0, trailing)
         let rawBytes = r.slice(rawLen)
         let (pcm, channels, frames) = deplanarize(rawBytes, headerLength: sample.length)
         sample.length = frames
         sample.channels = channels
 
-        let crc = r.u32()
+        let crc = hasCrc ? r.u32() : 0
         let crcStr = "0x" + String(crc, radix: 16, uppercase: true)
 
         return InstrumentData(
@@ -140,7 +144,6 @@ enum PolyendInstrument {
         w.u8(Int((inst.overdrive * 100).rounded()))
         w.u8(inst.bitdepth)
         w.skip(1) // reserved
-        w.skip(2) // final padding (matches hardware; see read counterpart)
 
         w.raw(rawBytes)
         w.u32(0) // CRC (cosmetic / unused)

@@ -234,8 +234,12 @@ enum TrackerRenoise {
         guard !inst.pcm.isEmpty else { return RNInstrument(name: name) }
         let looped = inst.looped && inst.loopEnd > inst.loopStart && inst.loopEnd > 0
         let modes = ["Forward", "PingPong", "Backward"]
-        let audio = Flac.encode(inst.pcm, sampleRate: inst.sampleRate)
-        let sm = RNSample(name: name.isEmpty ? "Sample" : name, audio: audio, audioExt: "flac",
+        // Mono → FLAC (like Renoise's own samples); stereo → WAV (our FLAC
+        // encoder is mono-only, and Renoise reads stereo WAV natively).
+        let (audio, audioExt): (Data, String) = inst.channels == 2
+            ? (Wav.encode(inst.pcm, sampleRate: inst.sampleRate, channels: 2), "wav")
+            : (Flac.encode(inst.pcm, sampleRate: inst.sampleRate), "flac")
+        let sm = RNSample(name: name.isEmpty ? "Sample" : name, audio: audio, audioExt: audioExt,
                           volume: 1.0,
                           transpose: 0,
                           baseNote: max(0, min(119, 48 - inst.transpose + noteOffset)),

@@ -313,11 +313,12 @@ enum InstrumentConstants {
     static let type = 1
     static let headerSize = 16          // 14 fields + 2 padding
     static let paddingAfterHeader = 2
-    // Summing the field writes gives 374; the TS write *allocates* 376 (an
-    // off-by-2 that strands 2 zero bytes and makes its own parser drop a sample).
-    // We use 374 and emit a real 4-byte CRC slot so read∘write is exact and the
-    // layout matches what the parser expects from hardware (header+fields+audio+CRC).
-    static let mainFieldsSize = 374
+    // Verified against real factory files: an audio-less .mti is exactly
+    // 16 + 372 + 4 (header + main fields + CRC), and a .pti stores the header
+    // `size` field as 0x0174 = 372. The TS *read* uses 372 (correct); only its
+    // *write* adds a stray +2 (and allocates 376). We use 372 for both, so the
+    // layout matches hardware: header(16) + fields(372) + audio + CRC(4).
+    static let mainFieldsSize = 372
     static let crcSize = 4
     static let envelopeCount = 6
     static let lfoCount = 6

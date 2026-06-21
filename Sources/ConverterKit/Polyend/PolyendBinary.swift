@@ -18,8 +18,8 @@ struct PolyendReader {
 
     // MARK: Sequential reads (advance `offset`)
 
-    mutating func u8() -> Int { defer { offset += 1 }; return Int(bytes[offset]) }
-    mutating func i8() -> Int { defer { offset += 1 }; return Int(Int8(bitPattern: bytes[offset])) }
+    mutating func u8() -> Int { defer { offset += 1 }; return offset >= 0 && offset < bytes.count ? Int(bytes[offset]) : 0 }
+    mutating func i8() -> Int { defer { offset += 1 }; return offset >= 0 && offset < bytes.count ? Int(Int8(bitPattern: bytes[offset])) : 0 }
     mutating func u16() -> Int { defer { offset += 2 }; return PolyendReader.u16(bytes, offset) }
     mutating func i16() -> Int { defer { offset += 2 }; return Int(Int16(bitPattern: UInt16(truncatingIfNeeded: PolyendReader.u16(bytes, offset)))) }
     mutating func u32() -> UInt32 { defer { offset += 4 }; return PolyendReader.u32(bytes, offset) }
@@ -28,7 +28,9 @@ struct PolyendReader {
 
     mutating func slice(_ n: Int) -> [UInt8] {
         defer { offset += n }
-        return Array(bytes[offset ..< offset + n])
+        let start = min(max(0, offset), bytes.count)
+        let end = min(max(start, offset + n), bytes.count)
+        return start < end ? Array(bytes[start ..< end]) : []
     }
 
     /// Reads `n` bytes as ASCII, truncated at the first NUL (matching the TS
@@ -40,7 +42,7 @@ struct PolyendReader {
 
     // MARK: Absolute reads (the project codec parses by fixed offsets)
 
-    func u8At(_ i: Int) -> Int { Int(bytes[i]) }
+    func u8At(_ i: Int) -> Int { (i >= 0 && i < bytes.count) ? Int(bytes[i]) : 0 }
     func u16At(_ i: Int) -> Int { PolyendReader.u16(bytes, i) }
     func u32At(_ i: Int) -> UInt32 { PolyendReader.u32(bytes, i) }
     func f32At(_ i: Int) -> Float { Float(bitPattern: PolyendReader.u32(bytes, i)) }
@@ -48,16 +50,23 @@ struct PolyendReader {
 
     // MARK: Primitives
 
+    // All primitives are bounds-safe: out-of-range reads return 0 / "" rather
+    // than trapping, so older/shorter firmware layouts (e.g. fsv-7 projects that
+    // lack the later absolute-offset fields) parse without crashing.
     private static func u16(_ b: [UInt8], _ i: Int) -> Int {
-        Int(b[i]) | (Int(b[i + 1]) << 8)
+        guard i >= 0, i + 2 <= b.count else { return 0 }
+        return Int(b[i]) | (Int(b[i + 1]) << 8)
     }
     private static func u32(_ b: [UInt8], _ i: Int) -> UInt32 {
-        UInt32(b[i]) | (UInt32(b[i + 1]) << 8) | (UInt32(b[i + 2]) << 16) | (UInt32(b[i + 3]) << 24)
+        guard i >= 0, i + 4 <= b.count else { return 0 }
+        return UInt32(b[i]) | (UInt32(b[i + 1]) << 8) | (UInt32(b[i + 2]) << 16) | (UInt32(b[i + 3]) << 24)
     }
     private static func ascii(_ b: [UInt8], _ i: Int, _ n: Int) -> String {
         var s = ""
         for k in 0 ..< n {
-            let c = b[i + k]
+            let j = i + k
+            guard j >= 0, j < b.count else { break }
+            let c = b[j]
             if c == 0 { break }
             s.append(Character(UnicodeScalar(c)))
         }

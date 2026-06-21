@@ -12,12 +12,14 @@ import Foundation
 
 enum Format {
     case xrns, dawproject, midi          // read + write
+    case polyend                         // Polyend Tracker project: read + write (a folder)
     case module                          // any libxmp-supported tracker module: import-only
 
     /// Source format from an input extension. Anything that isn't one of the
-    /// three round-trip formats is treated as a tracker module — libxmp detects
-    /// the exact format (MOD/S3M/XM/IT/STM/669/DBM/MED and ~50 more) by content,
-    /// so the extension need not be known ahead of time.
+    /// round-trip formats is treated as a tracker module — libxmp detects the
+    /// exact format (MOD/S3M/XM/IT/STM/669/DBM/MED and ~50 more) by content, so
+    /// the extension need not be known ahead of time. Polyend projects are
+    /// folders and detected separately (see `polyendSource`).
     init(inputExtension ext: String) {
         switch ext.lowercased() {
         case "xrns": self = .xrns
@@ -27,8 +29,8 @@ enum Format {
         }
     }
 
-    /// Writable target from an extension (used for -o and --to) — only the three
-    /// formats this tool can emit. Unknown extensions return nil.
+    /// Writable target from an extension (used for -o and --to) — only the
+    /// file-based formats this tool can emit. Unknown extensions return nil.
     init?(writableExtension ext: String) {
         switch ext.lowercased() {
         case "xrns": self = .xrns
@@ -43,6 +45,7 @@ enum Format {
         case "xrns", "renoise": self = .xrns
         case "dawproject", "daw", "dp": self = .dawproject
         case "mid", "midi": self = .midi
+        case "polyend", "tracker", "poly": self = .polyend
         default: return nil
         }
     }
@@ -50,22 +53,25 @@ enum Format {
     var ext: String {
         switch self {
         case .xrns: return "xrns"; case .dawproject: return "dawproject"
-        case .midi: return "mid"; case .module: return "module"
+        case .midi: return "mid"; case .polyend: return "polyend"; case .module: return "module"
         }
     }
 
     var label: String {
         switch self {
         case .xrns: return "Renoise"; case .dawproject: return "DAWproject"
-        case .midi: return "MIDI"; case .module: return "tracker module"
+        case .midi: return "MIDI"; case .polyend: return "Polyend Tracker"; case .module: return "tracker module"
         }
     }
 
     /// Legacy tracker modules can be read but not written.
     var importOnly: Bool { self == .module }
 
+    /// Polyend projects are folders (read/written as a directory tree), not files.
+    var isFolder: Bool { self == .polyend }
+
     /// Default target when the user gives neither --to nor an -o extension.
-    var defaultTarget: Format { self == .dawproject ? .xrns : .dawproject }
+    var defaultTarget: Format { (self == .dawproject || self == .polyend) ? .xrns : .dawproject }
 }
 
 struct Options {
@@ -78,16 +84,18 @@ struct Options {
 }
 
 let usage = """
-xrnsdaw — convert between Renoise (.xrns), DAWproject (.dawproject) and MIDI (.mid),
-and import legacy tracker modules (MOD, S3M, XM, IT, STM, 669, DBM, MED + ~50 more).
+xrnsdaw — convert between Renoise (.xrns), DAWproject (.dawproject), MIDI (.mid)
+and Polyend Tracker projects, and import legacy tracker modules (MOD, S3M, XM,
+IT, STM, 669, DBM, MED + ~50 more).
 
 USAGE:
   xrnsdaw <input> [options]
 
 OPTIONS:
-  -o, --output <path>      Output file (its extension can set the target format)
-      --to <format>        Target format: "xrns", "dawproject" or "midi"
-      --lpb <n>            Lines-per-beat grid when target is .xrns (default: derived from tempo)
+  -o, --output <path>      Output file, or output folder for a Polyend target
+      --to <format>        Target: "xrns", "dawproject", "midi" or "polyend"
+      --lpb <n>            Lines/steps-per-beat grid for .xrns or Polyend targets
+                           (default: derived from tempo for .xrns; 4 for Polyend)
       --layout <mode>      Legacy-module track layout: "channel" (faithful — one track per
                            tracker channel, preserves channel effects + stereo) or "instrument"
                            (one track per sound, best for mixing). Default: channel for .xrns,
@@ -95,9 +103,14 @@ OPTIONS:
   -v, --verbose            Print a conversion summary
   -h, --help               Show this help
 
-The source format is taken from the input extension; any non-round-trip extension
-is treated as a tracker module and identified by content. The target is --to, else
-the -o extension, else: xrns/midi/module → dawproject, dawproject → xrns.
+The source format is taken from the input extension; a folder (or project.mt) is a
+Polyend Tracker project, and any other non-round-trip extension is treated as a
+tracker module identified by content. The target is --to, else the -o extension,
+else: xrns/midi/module/polyend → dawproject (polyend/dawproject → xrns).
+
+Polyend support is EXPERIMENTAL: a project is a folder (project.mt + patterns/ +
+instruments/ + samples/). Export quantises to the step grid and is monophonic
+per track. Stereo samples are preserved (embedded as WAV in .xrns).
 """
 
 func parseArguments(_ args: [String]) throws -> Options {
@@ -205,6 +218,8 @@ private func readIR(_ format: Format, _ data: Data, path: String?, layout: Track
         return try Smf.read(data)
     case .module:
         return Tracker.toIR(try Xmp.read(data, path: path), layout: layout)
+    case .polyend:
+        preconditionFailure("Polyend source is read by PolyendSong.read (folder I/O), not readIR")
     }
 }
 
@@ -226,14 +241,32 @@ private func writeIR(_ format: Format, _ song: IRSong, lpb: Int?, stats: inout C
         return Smf.write(song)
     case .module:
         preconditionFailure("import-only target should have been rejected before writeIR")
+    case .polyend:
+        preconditionFailure("Polyend target is written by PolyendSong.write (folder I/O), not writeIR")
     }
+}
+
+/// Detect a Polyend Tracker project input: a directory containing `project.mt`,
+/// or a path to a `project.mt` file. Returns the project folder, else nil.
+private func polyendFolder(_ input: URL) -> URL? {
+    let fm = FileManager.default
+    if input.lastPathComponent == "project.mt", fm.fileExists(atPath: input.path) {
+        return input.deletingLastPathComponent()
+    }
+    var isDir: ObjCBool = false
+    if fm.fileExists(atPath: input.path, isDirectory: &isDir), isDir.boolValue,
+       fm.fileExists(atPath: input.appendingPathComponent("project.mt").path) {
+        return input
+    }
+    return nil
 }
 
 private func convert(_ opts: Options) throws {
     guard FileManager.default.fileExists(atPath: opts.input.path) else {
-        throw ConvertError.io("input file not found: \(opts.input.path)")
+        throw ConvertError.io("input not found: \(opts.input.path)")
     }
-    let source = Format(inputExtension: opts.input.pathExtension)
+    let polyendIn = polyendFolder(opts.input)
+    let source = polyendIn != nil ? .polyend : Format(inputExtension: opts.input.pathExtension)
     let target = opts.target
         ?? opts.output.flatMap { Format(writableExtension: $0.pathExtension) }
         ?? source.defaultTarget
@@ -243,35 +276,52 @@ private func convert(_ opts: Options) throws {
     guard target != source else {
         throw ConvertError.usage("source and target are both \(source.label); nothing to convert")
     }
-    let output = opts.output ?? opts.input.deletingPathExtension().appendingPathExtension(target.ext)
 
-    // Default legacy-module layout per target: a tracker target (.xrns) keeps the
-    // faithful per-channel layout; re-orchestration targets default to one track
-    // per instrument. --layout overrides either way.
-    let layout = opts.layout ?? (target == .xrns ? .channel : .instrument)
+    // Output: a folder for a Polyend target, else a file with the target extension.
+    let output = opts.output ?? (target.isFolder
+        ? opts.input.deletingPathExtension()
+        : opts.input.deletingPathExtension().appendingPathExtension(target.ext))
 
-    let inputData = try Data(contentsOf: opts.input)
+    // Default legacy-module layout per target: tracker-style targets (.xrns,
+    // .polyend) keep the faithful per-channel layout; re-orchestration targets
+    // default to one track per instrument. --layout overrides either way.
+    let layout = opts.layout ?? ((target == .xrns || target == .polyend) ? .channel : .instrument)
+    // Polyend step grid (steps per beat); --lpb overrides the 16th-note default.
+    let stepsPerBeat = opts.linesPerBeat ?? PolyendSong.defaultStepsPerBeat
+
     var stats = ConvertStats()
     var tempoMapPoints = 0
-    let outputData: Data
 
     // Tracker module → Renoise, channel layout, no explicit grid: use the direct
     // pattern-pooled path so the result matches Renoise's own module import (full
     // pattern pool + sequence, native line counts, cell-for-cell). An explicit
     // --lpb, the instrument layout, or any other target falls through to the IR.
     if source == .module, target == .xrns, layout == .channel, opts.linesPerBeat == nil {
-        let renoise = TrackerRenoise.convert(try Xmp.read(inputData, path: opts.input.path))
+        let renoise = TrackerRenoise.convert(try Xmp.read(try Data(contentsOf: opts.input), path: opts.input.path))
         stats.tracks = renoise.tracks.count
         stats.patternsOrClips = renoise.patterns.count
         stats.linesPerBeat = renoise.linesPerBeat
         stats.notes = countNoteOns(renoise)
-        outputData = packRenoiseXrns(renoise)
+        try packRenoiseXrns(renoise).write(to: output)
     } else {
-        let song = try readIR(source, inputData, path: opts.input.path, layout: layout)
-        outputData = writeIR(target, song, lpb: opts.linesPerBeat, stats: &stats)
+        // Source → IR
+        let song: IRSong
+        if let folder = polyendIn {
+            song = try PolyendSong.read(folder: folder, stepsPerBeat: stepsPerBeat)
+        } else {
+            song = try readIR(source, try Data(contentsOf: opts.input), path: opts.input.path, layout: layout)
+        }
         tempoMapPoints = song.tempoMap.count
+
+        // IR → target
+        if target == .polyend {
+            stats.tracks = song.tracks.count
+            stats.notes = song.tracks.reduce(0) { $0 + $1.clips.reduce(0) { $0 + $1.notes.count } }
+            stats.droppedNotes = try PolyendSong.write(song, to: output, stepsPerBeat: stepsPerBeat)
+        } else {
+            try writeIR(target, song, lpb: opts.linesPerBeat, stats: &stats).write(to: output)
+        }
     }
-    try outputData.write(to: output)
     print("Wrote \(output.lastPathComponent)  (\(source.label) → \(target.label))")
 
     if opts.verbose {
@@ -280,6 +330,9 @@ private func convert(_ opts: Options) throws {
         if source == .module {
             print("  layout:   \(layout == .channel ? "channel (one track per tracker channel)" : "instrument (one track per sound)")")
         }
+        if source == .polyend || target == .polyend {
+            print("  grid:     \(stepsPerBeat) steps/beat")
+        }
         switch target {
         case .xrns:
             print("  patterns: \(stats.patternsOrClips)")
@@ -287,12 +340,13 @@ private func convert(_ opts: Options) throws {
             print("  lpb:      \(stats.linesPerBeat)\(note)")
         case .dawproject:
             print("  clips:    \(stats.patternsOrClips)")
-        case .midi, .module:
+        case .midi, .polyend, .module:
             break
         }
         if tempoMapPoints > 0 { print("  tempo map: \(tempoMapPoints) points") }
         if stats.droppedNotes > 0 {
-            print("  dropped:  \(stats.droppedNotes) notes (exceeded 12-column polyphony)")
+            let why = target == .polyend ? "overlap on monophonic Polyend tracks" : "exceeded 12-column polyphony"
+            print("  dropped:  \(stats.droppedNotes) notes (\(why))")
         }
     }
 }

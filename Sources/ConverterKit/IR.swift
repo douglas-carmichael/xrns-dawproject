@@ -88,8 +88,11 @@ struct ADSR {
 struct ExtractedSample {
     var name: String
     var comment: String?
-    var pcm: [Int16]       // mono, 16-bit
+    var pcm: [Int16]       // 16-bit; interleaved when `channels` == 2, else mono
     var sampleRate: Int
+    /// 1 = mono, 2 = stereo. Mono samples embed as FLAC; stereo embed as WAV
+    /// (the FLAC encoder is mono-only, and Renoise/DAWproject read stereo WAV).
+    var channels: Int = 1
     var rootKey: Int       // MIDI key the sample is tuned to (informational)
     var loopStart: Int = 0 // loop points in frames (loopEnd == 0 → no loop)
     var loopEnd: Int = 0

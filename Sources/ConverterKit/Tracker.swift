@@ -48,9 +48,11 @@ struct TInstrument {
     /// S3M/IT C5 playback rate). Added to pattern notes so the output lands in
     /// the octave the instrument actually sounds at.
     var transpose: Int = 0
-    /// Decoded 16-bit mono PCM (empty if not decoded), and its playback rate.
+    /// Decoded 16-bit PCM (empty if not decoded), and its playback rate.
+    /// Interleaved L/R when `channels` == 2 (libxmp XMP_SAMPLE_STEREO), else mono.
     var pcm: [Int16] = []
     var sampleRate: Int = 8363
+    var channels: Int = 1
     /// New Note Action mapped to Renoise's vocabulary: Cut / NoteOff / None.
     var newNoteAction: String = "NoteOff"
     /// Volume envelope reduced to AHDSR (XM/IT envelope, or AM-synth amplitude
@@ -142,7 +144,8 @@ enum Tracker {
         func extracted(_ n: Int, name: String, comment: String?) -> ExtractedSample? {
             guard let i = info(n), !i.pcm.isEmpty else { return nil }
             return ExtractedSample(name: name, comment: comment, pcm: i.pcm,
-                                   sampleRate: i.sampleRate, rootKey: 60 + i.transpose,
+                                   sampleRate: i.sampleRate, channels: i.channels,
+                                   rootKey: 60 + i.transpose,
                                    loopStart: i.looped ? i.loopStart : 0,
                                    loopEnd: i.looped ? i.loopEnd : 0,
                                    loopType: i.loopType, newNoteAction: i.newNoteAction,
