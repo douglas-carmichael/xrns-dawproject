@@ -50,14 +50,16 @@ enum Xmp {
         m.channelPans = (0..<m.channels).map { Double(xmpb_chn_pan(modP, Int32($0))) / 255.0 }
         m.initialTempoBPM = (mod.bpm >= 32 ? Double(mod.bpm) : 125) * timeScale
         m.initialSpeed = max(1, Int(mod.spd))
-        // Walk the order list, honouring S3M/IT separators: 0xFF ("---") ends the
-        // song (stop), 0xFE ("+++") is a skip (ignore, continue). Renoise does the
-        // same, so entries after the end marker don't become bogus sequence slots.
+        // Walk the order list. 0xFE ("+++") is a skip; 0xFF ("---") normally marks
+        // the song end. But some S3M/IT files pack several sub-songs separated by
+        // 0xFF — 2nd_skav (Second Reality) holds BOTH the intro and the ending that
+        // way. A plain player (and Renoise's import) stop at the first 0xFF and lose
+        // everything after, so we instead skip the marker and keep scanning, so every
+        // section is converted. Trailing 0xFF padding simply contributes nothing.
         var order: [Int] = []
         for i in 0..<Int(mod.len) {
             let o = Int(xmpb_order(modP, Int32(i)))
-            if o == 0xFF { break }            // XMP_MARK_END
-            if o == 0xFE { continue }         // XMP_MARK_SKIP
+            if o == 0xFF || o == 0xFE { continue }   // end / skip markers
             if o >= 0 && o < Int(mod.pat) { order.append(o) }
         }
         m.order = order
