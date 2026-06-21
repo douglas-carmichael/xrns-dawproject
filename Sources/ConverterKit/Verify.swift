@@ -93,8 +93,12 @@ public enum Verify {
                 // THIS row's frame-0 value; regular slides apply on ticks 1…speed-1, so
                 // their effect first shows at the NEXT row's frame 0. libxmp is sampled
                 // at frame 0, so apply fine now and defer the regular step past compare.
+                // Volume slide: Axy/Dxy (0x0A), and — for S3M/MOD, where the converter
+                // emits it in the effect column — the volume-slide part of the combos
+                // Lxy/5xy (0x05) and Kxy/6xy (0x06). XM/IT ride the volume column.
+                let comboSlide = (cell.fx1Type == 0x05 || cell.fx1Type == 0x06) && (m.format == "S3M" || m.format == "MOD")
                 var regSlide = 0
-                if active[ch] && cell.fx1Type == 0x0A {
+                if active[ch] && (cell.fx1Type == 0x0A || comboSlide) {
                     var p = cell.fx1Param
                     if p != 0 { mem[ch] = p } else { p = mem[ch] }
                     let up = p >> 4, dn = p & 0x0F

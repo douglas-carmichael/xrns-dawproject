@@ -53,13 +53,16 @@ enum TrackerEffects {
         case FX.portaUp:    return porta("0U")
         case FX.portaDn:    return porta("0D")
         case FX.tonePorta:  return ec("0G", p)           // tone portamento → glide
-        case FX.toneVSlide:                              // Lxy: glide continues + volume slide
-            return format == "S3M" ? (p == 0 ? nil : volSlideFx(p)) : ec("0G", p)
+        case FX.toneVSlide:                              // Lxy / 5xy: glide continues + volume slide
+            // S3M and MOD keep the slide in the effect parameter with no volume
+            // column to hold it, so emit the fade here (the audible part, matching
+            // libxmp). XM/IT ride the volume column, so keep the glide there.
+            return (format == "S3M" || format == "MOD") ? (p == 0 ? nil : volSlideFx(p)) : ec("0G", p)
         case FX.vibrato, FX.fineVibrato: return ec("0V", p)   // (fine) vibrato → vibrato
-        case FX.vibraVSlide:                             // Kxy: vibrato continues + volume slide
+        case FX.vibraVSlide:                             // Kxy / 6xy: vibrato continues + volume slide
             // XM/IT carry the slide in the volume column (oracle emits no effect);
-            // S3M has no such column, so the slide must go in the effect column.
-            return format == "S3M" ? (p == 0 ? nil : volSlideFx(p)) : nil
+            // S3M and MOD have no such column, so the slide must go in the effect column.
+            return (format == "S3M" || format == "MOD") ? (p == 0 ? nil : volSlideFx(p)) : nil
         case FX.tremolo:    return ec("0O", p)
         case FX.multiRetrig:                             // Qxy: retrigger note every y ticks
             return format == "S3M" ? ec("0R", p & 0x0F) : nil
