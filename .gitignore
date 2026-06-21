@@ -26,3 +26,8 @@ HANDOFF.txt
 TrackerSD/
 # Renoise IT volume-column bug report (one-off deliverable, kept local)
 renoise-it-volcol-bug-report.md
+
+# Conversion outputs (may derive from copyrighted inputs)
+*.dawproject
+*.mid
+*.midi
