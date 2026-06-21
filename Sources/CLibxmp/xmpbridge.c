@@ -15,6 +15,19 @@ int xmpb_sub_xpo(const struct xmp_module *m, int i) { return m->xxi[i].nsm > 0 ?
 int xmpb_sub_sid(const struct xmp_module *m, int i) { return m->xxi[i].nsm > 0 ? m->xxi[i].sub[0].sid : -1; }
 int xmpb_ins_nna(const struct xmp_module *m, int i) { return m->xxi[i].nsm > 0 ? m->xxi[i].sub[0].nna : 0; }
 
+int xmpb_ins_nsm(const struct xmp_module *m, int i) { return m->xxi[i].nsm; }
+int xmpb_map_ins(const struct xmp_module *m, int i, int key) {
+	if (key < 0 || key >= XMP_MAX_KEYS) return -1;
+	return m->xxi[i].map[key].ins;
+}
+int xmpb_sub_sid_at(const struct xmp_module *m, int i, int sub) {
+	return (sub >= 0 && sub < m->xxi[i].nsm) ? m->xxi[i].sub[sub].sid : -1;
+}
+int xmpb_sub_xpo_at(const struct xmp_module *m, int i, int sub) {
+	return (sub >= 0 && sub < m->xxi[i].nsm) ? m->xxi[i].sub[sub].xpo : 0;
+}
+const char *xmpb_smp_name(const struct xmp_module *m, int s) { return m->xxs[s].name; }
+
 int xmpb_smp_len(const struct xmp_module *m, int s) { return m->xxs[s].len; }
 int xmpb_smp_lps(const struct xmp_module *m, int s) { return m->xxs[s].lps; }
 int xmpb_smp_lpe(const struct xmp_module *m, int s) { return m->xxs[s].lpe; }

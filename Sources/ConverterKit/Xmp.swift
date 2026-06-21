@@ -90,6 +90,42 @@ enum Xmp {
             m.patterns.append(pattern)
         }
 
+        // Decode one libxmp sample (by id) into a TSample carrying its PCM, loop
+        // and channel layout (range/tuning are filled in by the caller). Cached so
+        // a key-mapped instrument that reuses a sample never re-decodes it.
+        var sampleCache: [Int: TSample] = [:]
+        func loadSample(_ sid: Int) -> TSample? {
+            guard sid >= 0, sid < Int(mod.smp) else { return nil }
+            if let c = sampleCache[sid] { return c }
+            let len = Int(xmpb_smp_len(modP, Int32(sid)))
+            let flg = Int(xmpb_smp_flg(modP, Int32(sid)))
+            var s = TSample()
+            s.name = String(cString: xmpb_smp_name(modP, Int32(sid))).trimmingCharacters(in: .whitespacesAndNewlines)
+            s.looped = (flg & Int(XMP_SAMPLE_LOOP)) != 0
+            s.loopType = (flg & Int(XMP_SAMPLE_LOOP_BIDIR)) != 0 ? 1
+                       : ((flg & Int(XMP_SAMPLE_LOOP_REVERSE)) != 0 ? 2 : 0)
+            s.loopStart = Int(xmpb_smp_lps(modP, Int32(sid)))
+            s.loopEnd = Int(xmpb_smp_lpe(modP, Int32(sid)))
+            let stereo = (flg & Int(XMP_SAMPLE_STEREO)) != 0
+            s.channels = stereo ? 2 : 1
+            if len > 0, (flg & Int(XMP_SAMPLE_SYNTH)) == 0, let dp = xmpb_smp_data(modP, Int32(sid)) {
+                // libxmp stereo data is interleaved L/R; `len` is in frames, so a
+                // stereo sample holds len*2 16-bit values.
+                s.pcm = decodePCM(dp, len: stereo ? len * 2 : len, sixteenBit: (flg & Int(XMP_SAMPLE_16BIT)) != 0)
+            }
+            sampleCache[sid] = s
+            return s
+        }
+        // The subinstrument a cell-note maps to. Pattern events use cell-note =
+        // ev.note − 13, but libxmp's key→subinstrument table sits one semitone
+        // below that (its base differs from the event scale), so the keyzone for
+        // cell-note c reads map[c + 12] — verified against Renoise's own import,
+        // which lands a drum kit's zones one semitone above a c+13 lookup. Keys
+        // past the table (c > 108) clamp to the top entry, extending it upward.
+        func subForKey(_ ins: Int, _ c: Int) -> Int {
+            Int(xmpb_map_ins(modP, Int32(ins), Int32(min(120, c + 12))))
+        }
+
         for i in 0..<Int(mod.ins) {
             var inst = TInstrument(name: String(cString: xmpb_ins_name(modP, Int32(i)))
                 .trimmingCharacters(in: .whitespacesAndNewlines))
@@ -101,24 +137,37 @@ enum Xmp {
             default: inst.newNoteAction = "NoteOff"         // OFF / FADE (Renoise has no sample-level fade)
             }
             inst.envelope = envelopeADSR(modP, i)           // XM/IT/AM-synth volume envelope → AHDSR
-            let sid = Int(xmpb_sub_sid(modP, Int32(i)))
-            if sid >= 0, sid < Int(mod.smp) {
-                let len = Int(xmpb_smp_len(modP, Int32(sid)))
-                let flg = Int(xmpb_smp_flg(modP, Int32(sid)))
-                inst.sampleFrames = len
-                inst.looped = (flg & Int(XMP_SAMPLE_LOOP)) != 0
-                inst.loopType = (flg & Int(XMP_SAMPLE_LOOP_BIDIR)) != 0 ? 1
-                              : ((flg & Int(XMP_SAMPLE_LOOP_REVERSE)) != 0 ? 2 : 0)
-                inst.loopStart = Int(xmpb_smp_lps(modP, Int32(sid)))
-                inst.loopEnd = Int(xmpb_smp_lpe(modP, Int32(sid)))
-                let stereo = (flg & Int(XMP_SAMPLE_STEREO)) != 0
-                inst.channels = stereo ? 2 : 1
-                if len > 0, (flg & Int(XMP_SAMPLE_SYNTH)) == 0, let dp = xmpb_smp_data(modP, Int32(sid)) {
-                    // libxmp stereo data is interleaved L/R; `len` is in frames,
-                    // so a stereo sample holds len*2 16-bit values.
-                    inst.pcm = decodePCM(dp, len: stereo ? len * 2 : len,
-                                         sixteenBit: (flg & Int(XMP_SAMPLE_16BIT)) != 0)
+
+            // Primary sample (subinstrument 0) → the instrument's top-level fields,
+            // used by the flattening IR path and by single-sample output.
+            if let prim = loadSample(Int(xmpb_sub_sid(modP, Int32(i)))) {
+                inst.sampleFrames = prim.pcm.count / max(1, prim.channels)
+                inst.looped = prim.looped; inst.loopType = prim.loopType
+                inst.loopStart = prim.loopStart; inst.loopEnd = prim.loopEnd
+                inst.channels = prim.channels; inst.pcm = prim.pcm
+            }
+
+            // Key-mapped (multi-sample) instrument — a drum kit or layered XM/IT
+            // instrument. Walk the key table in maximal runs of consecutive keys
+            // that share a subinstrument; each run becomes one sample with its own
+            // range and tuning. Single-sample instruments leave `samples` empty and
+            // use the primary fields above (full 0…119 range).
+            if Int(xmpb_ins_nsm(modP, Int32(i))) > 1 {
+                var samples: [TSample] = []
+                func emit(_ sub: Int, _ from: Int, _ to: Int) {
+                    guard var s = loadSample(Int(xmpb_sub_sid_at(modP, Int32(i), Int32(sub)))) else { return }
+                    s.transpose = Int(xmpb_sub_xpo_at(modP, Int32(i), Int32(sub)))
+                    s.noteStart = from; s.noteEnd = to
+                    samples.append(s)
                 }
+                var runStart = 0, runSub = subForKey(i, 0)
+                for c in 1...119 {
+                    let sub = subForKey(i, c)
+                    if sub != runSub { emit(runSub, runStart, c - 1); runStart = c; runSub = sub }
+                }
+                emit(runSub, runStart, 119)
+                let real = samples.filter { !$0.pcm.isEmpty }
+                if real.count > 1 { inst.samples = real }   // genuine multi-sample only
             }
             m.instruments.append(inst)
         }

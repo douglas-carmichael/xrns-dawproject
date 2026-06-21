@@ -236,23 +236,51 @@ enum TrackerRenoise {
     /// (a constant ~0.2-semitone global tuning-reference offset; no relative drift).
     private static func instrument(_ inst: TInstrument, noteOffset: Int) -> RNInstrument {
         let name = inst.name
-        guard !inst.pcm.isEmpty else { return RNInstrument(name: name) }
-        let looped = inst.looped && inst.loopEnd > inst.loopStart && inst.loopEnd > 0
         let modes = ["Forward", "PingPong", "Backward"]
-        // Mono → FLAC (like Renoise's own samples); stereo → WAV (our FLAC
-        // encoder is mono-only, and Renoise reads stereo WAV natively).
-        let (audio, audioExt): (Data, String) = inst.channels == 2
-            ? (Wav.encode(inst.pcm, sampleRate: inst.sampleRate, channels: 2), "wav")
-            : (Flac.encode(inst.pcm, sampleRate: inst.sampleRate), "flac")
-        let sm = RNSample(name: name.isEmpty ? "Sample" : name, audio: audio, audioExt: audioExt,
-                          volume: 1.0,
-                          transpose: 0,
-                          baseNote: max(0, min(119, 48 - inst.transpose + noteOffset)),
-                          loopMode: looped ? modes[min(2, max(0, inst.loopType))] : "Off",
-                          loopStart: looped ? inst.loopStart : 0,
-                          loopEnd: looped ? inst.loopEnd : 0,
-                          newNoteAction: inst.newNoteAction,
-                          envelope: inst.envelope)
-        return RNInstrument(name: name, sample: sm)
+        // Encode one keyzone's PCM (mono → FLAC like Renoise; stereo → WAV, as our
+        // FLAC encoder is mono-only) and package it with its mapping. `baseNote`
+        // and the note range are final Renoise note values (caller applies the
+        // per-format display offset). nil when there's no PCM to embed.
+        func make(_ sName: String, _ pcm: [Int16], rate: Int, channels: Int,
+                  looped lp: Bool, loopType: Int, loopStart: Int, loopEnd: Int,
+                  baseNote: Int, noteStart: Int, noteEnd: Int) -> RNSample? {
+            guard !pcm.isEmpty else { return nil }
+            let looped = lp && loopEnd > loopStart && loopEnd > 0
+            let (audio, ext): (Data, String) = channels == 2
+                ? (Wav.encode(pcm, sampleRate: rate, channels: 2), "wav")
+                : (Flac.encode(pcm, sampleRate: rate), "flac")
+            return RNSample(name: sName.isEmpty ? "Sample" : sName, audio: audio, audioExt: ext,
+                            volume: 1.0, transpose: 0,
+                            baseNote: max(0, min(119, baseNote)),
+                            loopMode: looped ? modes[min(2, max(0, loopType))] : "Off",
+                            loopStart: looped ? loopStart : 0,
+                            loopEnd: looped ? loopEnd : 0,
+                            newNoteAction: inst.newNoteAction,
+                            envelope: inst.envelope,
+                            noteStart: max(0, min(119, noteStart)),
+                            noteEnd: max(0, min(119, noteEnd)))
+        }
+
+        // Key-mapped (multi-sample) instrument — drum kit / layered XM/IT: one
+        // RNSample per keyzone, each with its own note range and root note. The
+        // ranges are in cell-note space; add the format's display offset to land
+        // on Renoise's note values (matching the pattern notes' own offset).
+        if !inst.samples.isEmpty {
+            let rn = inst.samples.compactMap {
+                make($0.name, $0.pcm, rate: $0.sampleRate, channels: $0.channels,
+                     looped: $0.looped, loopType: $0.loopType, loopStart: $0.loopStart, loopEnd: $0.loopEnd,
+                     baseNote: 48 - $0.transpose + noteOffset,
+                     noteStart: $0.noteStart + noteOffset, noteEnd: $0.noteEnd + noteOffset)
+            }
+            if !rn.isEmpty { return RNInstrument(name: name, samples: rn) }
+        }
+
+        // Single-sample instrument (the common case): one sample across 0…119.
+        guard let sm = make(name, inst.pcm, rate: inst.sampleRate, channels: inst.channels,
+                            looped: inst.looped, loopType: inst.loopType,
+                            loopStart: inst.loopStart, loopEnd: inst.loopEnd,
+                            baseNote: 48 - inst.transpose + noteOffset, noteStart: 0, noteEnd: 119)
+        else { return RNInstrument(name: name) }
+        return RNInstrument(name: name, samples: [sm])
     }
 }

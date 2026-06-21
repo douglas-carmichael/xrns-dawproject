@@ -37,6 +37,24 @@ struct TCell {
 }
 
 /// Instrument/sample metadata used for naming + classification (no audio).
+/// One sample within an instrument's keyzone map. A drum kit / layered XM/IT
+/// instrument maps different key ranges to different samples; `noteStart…noteEnd`
+/// is that range in cell-note space (libxmp note − 13, i.e. before any per-format
+/// display offset). `transpose` is the subinstrument's tuning (xpo).
+struct TSample {
+    var name: String = ""
+    var pcm: [Int16] = []
+    var sampleRate: Int = 8363
+    var channels: Int = 1
+    var looped: Bool = false
+    var loopStart: Int = 0
+    var loopEnd: Int = 0
+    var loopType: Int = 0
+    var transpose: Int = 0
+    var noteStart: Int = 0
+    var noteEnd: Int = 119
+}
+
 struct TInstrument {
     var name: String = ""
     var sampleFrames: Int = 0   // length in sample frames (0 = unknown/empty)
@@ -58,6 +76,12 @@ struct TInstrument {
     /// Volume envelope reduced to AHDSR (XM/IT envelope, or AM-synth amplitude
     /// envelope), nil if the instrument has none.
     var envelope: ADSR? = nil
+    /// Keyzone map for a multi-sample (key-mapped) instrument — a drum kit or a
+    /// layered XM/IT instrument. Empty for the common single-sample case (the
+    /// fields above describe that one sample); when non-empty it holds every
+    /// sample with its own key range, and the fields above mirror the primary
+    /// (widest-range) entry so the flattening IR path still has one sample.
+    var samples: [TSample] = []
 }
 
 /// Neutral representation populated from a parsed module.

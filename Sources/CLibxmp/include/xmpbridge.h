@@ -28,6 +28,16 @@ int xmpb_sub_xpo(const struct xmp_module *m, int i);
 int xmpb_sub_sid(const struct xmp_module *m, int i);
 int xmpb_ins_nna(const struct xmp_module *m, int i); /* New Note Action: 0=Cut 1=Cont 2=Off 3=Fade */
 
+/* Multi-sample / key-mapped instruments (drum kits, layered XM/IT instruments).
+ * An instrument has nsm subinstruments; each key (0..120) maps to one of them
+ * via map[key].ins, and each subinstrument points to a sample (sid) with its own
+ * transpose (xpo). xmpb_smp_name gives a sample's own name. */
+int xmpb_ins_nsm(const struct xmp_module *m, int i);              /* subinstrument count */
+int xmpb_map_ins(const struct xmp_module *m, int i, int key);    /* subinstrument index for a key, -1 if out of range */
+int xmpb_sub_sid_at(const struct xmp_module *m, int i, int sub); /* sample id of a subinstrument, -1 if invalid */
+int xmpb_sub_xpo_at(const struct xmp_module *m, int i, int sub); /* transpose of a subinstrument */
+const char *xmpb_smp_name(const struct xmp_module *m, int s);    /* sample name */
+
 int xmpb_smp_len(const struct xmp_module *m, int s);
 int xmpb_smp_lps(const struct xmp_module *m, int s);
 int xmpb_smp_lpe(const struct xmp_module *m, int s);

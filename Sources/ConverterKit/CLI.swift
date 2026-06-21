@@ -176,9 +176,12 @@ private func sanitizeRenoiseName(_ s: String) -> String {
 private func packRenoiseXrns(_ renoise: RenoiseSong) -> Data {
     var entries: [(name: String, data: Data)] = [("Song.xml", Data(RenoiseWriter.write(renoise).utf8))]
     for (i, inst) in renoise.instruments.enumerated() {
-        guard let s = inst.sample else { continue }
         let dir = "SampleData/Instrument\(String(format: "%02d", i)) (\(sanitizeRenoiseName(inst.name)))"
-        entries.append(("\(dir)/Sample00 (\(sanitizeRenoiseName(s.name))).\(s.audioExt)", s.audio))
+        // One audio file per sample — a key-mapped instrument (drum kit) embeds
+        // several (Sample00, Sample01, …) where Renoise locates them by index.
+        for (j, s) in inst.samples.enumerated() {
+            entries.append(("\(dir)/Sample\(String(format: "%02d", j)) (\(sanitizeRenoiseName(s.name))).\(s.audioExt)", s.audio))
+        }
     }
     return Zip.create(entries: entries)
 }

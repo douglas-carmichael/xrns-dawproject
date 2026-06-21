@@ -66,13 +66,22 @@ struct RNSample {
     var loopEnd: Int = 0
     var newNoteAction: String = "NoteOff"  // Cut / NoteOff / None  (NNA)
     var envelope: ADSR? = nil              // volume AHDSR modulation, nil = none
+    var noteStart: Int = 0                 // keyzone range, Renoise note value 0…119
+    var noteEnd: Int = 119                 // (a drum kit maps several samples across the keyboard)
 }
 
-/// A Renoise instrument slot. A nil `sample` is an empty placeholder (notes can
-/// still reference it); otherwise it holds one playable sample.
+/// A Renoise instrument slot. Empty `samples` is an empty placeholder (notes can
+/// still reference it); one sample is the common case; several samples are a
+/// key-mapped instrument (drum kit / layered XM/IT instrument).
 struct RNInstrument {
     var name: String
-    var sample: RNSample?
+    var samples: [RNSample]
+
+    init(name: String, samples: [RNSample] = []) { self.name = name; self.samples = samples }
+    /// Backward-compatible single-sample construction.
+    init(name: String, sample: RNSample?) { self.name = name; self.samples = sample.map { [$0] } ?? [] }
+    /// The first (often only) sample — convenience for single-sample readers.
+    var sample: RNSample? { samples.first }
 }
 
 struct RenoiseSong {
@@ -350,25 +359,33 @@ enum RenoiseWriter {
         // instrument", so these wrappers/items stay attribute-free.
         let el = XML("Instrument")
         el.leaf("Name", inst.name)
-        guard let s = inst.sample else { return el }
+        guard !inst.samples.isEmpty else { return el }
 
+        // One <Sample> per keyzone. A single-sample instrument spans the whole
+        // keyboard (0…119); a key-mapped instrument (drum kit / layered XM/IT)
+        // emits several, each with its own note range — so a drum line plays the
+        // right drum per key instead of one sample pitched across the keyboard.
+        // All samples share modulation set 0 (matching Renoise's own import).
         let gen = el.element("SampleGenerator")
         let samples = gen.element("Samples")
-        let sm = samples.element("Sample")
-        sm.leaf("Name", s.name)
-        sm.leaf("Volume", floatString(s.volume))
-        sm.leaf("Panning", "0.5")
-        sm.leaf("Transpose", String(max(-127, min(127, s.transpose))))
-        sm.leaf("Finetune", "0")
-        sm.leaf("NewNoteAction", s.newNoteAction)
-        sm.leaf("LoopMode", s.loopMode)
-        sm.leaf("LoopStart", String(max(0, s.loopStart)))
-        sm.leaf("LoopEnd", String(max(0, s.loopEnd)))
-        let map = sm.element("Mapping")
-        map.leaf("BaseNote", String(max(0, min(119, s.baseNote))))
-        map.leaf("NoteStart", "0")
-        map.leaf("NoteEnd", "119")
-        map.leaf("MapKeyToPitch", "true")
+        for s in inst.samples {
+            let sm = samples.element("Sample")
+            sm.leaf("Name", s.name)
+            sm.leaf("Volume", floatString(s.volume))
+            sm.leaf("Panning", "0.5")
+            sm.leaf("Transpose", String(max(-127, min(127, s.transpose))))
+            sm.leaf("Finetune", "0")
+            sm.leaf("NewNoteAction", s.newNoteAction)
+            sm.leaf("LoopMode", s.loopMode)
+            sm.leaf("LoopStart", String(max(0, s.loopStart)))
+            sm.leaf("LoopEnd", String(max(0, s.loopEnd)))
+            sm.leaf("ModulationSetIndex", "0")
+            let map = sm.element("Mapping")
+            map.leaf("BaseNote", String(max(0, min(119, s.baseNote))))
+            map.leaf("NoteStart", String(max(0, min(119, s.noteStart))))
+            map.leaf("NoteEnd", String(max(0, min(119, s.noteEnd))))
+            map.leaf("MapKeyToPitch", "true")
+        }
 
         // Every sample-backed instrument carries the base modulation set Renoise
         // itself writes on import — a single SampleMixerModulationDevice. Renoise's
