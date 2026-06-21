@@ -18,15 +18,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # windows-2022 (not windows-latest): the Swift 6.0.x toolchain's clang
-        # can't build the ucrt/_Builtin_intrinsics modules against the newer
-        # VS2025 SDK that windows-latest is migrating to.
-        os: [ macos-latest, ubuntu-latest, windows-2022 ]
+        # Per-OS Swift pin. macOS/Linux use 6.0. Windows uses 5.10 + windows-2022:
+        # Swift 6.0.x on Windows has a C-interop toolchain bug ("cyclic dependency
+        # in module 'ucrt' -> _Builtin_intrinsics -> ucrt") that breaks importing
+        # any C module, and windows-latest's VS2025 SDK compounds it.
+        include:
+          - os: macos-latest
+            swift: "6.0"
+          - os: ubuntu-latest
+            swift: "6.0"
+          - os: windows-2022
+            swift: "5.10"
     steps:
       - uses: actions/checkout@v4
       - uses: SwiftyLab/setup-swift@latest
         with:
-          swift-version: "6.0"
+          swift-version: ${{ matrix.swift }}
       - name: Build (release)
         run: swift build -c release
       - name: Test
@@ -46,17 +53,20 @@ jobs:
           - os: macos-latest
             asset: xrnsdaw-macos-arm64
             static: ""
+            swift: "6.0"
           - os: ubuntu-latest
             asset: xrnsdaw-linux-x86_64
             static: "--static-swift-stdlib"
+            swift: "6.0"
           - os: windows-2022
             asset: xrnsdaw-windows-x86_64
             static: ""
+            swift: "5.10"
     steps:
       - uses: actions/checkout@v4
       - uses: SwiftyLab/setup-swift@latest
         with:
-          swift-version: "6.0"
+          swift-version: ${{ matrix.swift }}
       - name: Build (release)
         run: swift build -c release ${{ matrix.static }}
       - name: Stage binary (Unix)
