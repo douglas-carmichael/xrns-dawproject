@@ -60,6 +60,7 @@ struct RNSample {
     var audioExt: String = "flac"          // container extension for the audio
     var volume: Double = 1.0
     var transpose: Int = 0                 // semitones
+    var finetune: Int = 0                  // −127…127 (≈ 1/128 semitone)
     var baseNote: Int = 48                 // root key as a Renoise note (C-4 = 48 = MIDI 60)
     var loopMode: String = "Off"           // Off / Forward / Backward / PingPong
     var loopStart: Int = 0
@@ -374,7 +375,7 @@ enum RenoiseWriter {
             sm.leaf("Volume", floatString(s.volume))
             sm.leaf("Panning", "0.5")
             sm.leaf("Transpose", String(max(-127, min(127, s.transpose))))
-            sm.leaf("Finetune", "0")
+            sm.leaf("Finetune", String(max(-127, min(127, s.finetune))))
             sm.leaf("NewNoteAction", s.newNoteAction)
             sm.leaf("LoopMode", s.loopMode)
             sm.leaf("LoopStart", String(max(0, s.loopStart)))

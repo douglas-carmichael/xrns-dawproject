@@ -295,14 +295,14 @@ enum TrackerRenoise {
         // per-format display offset). nil when there's no PCM to embed.
         func make(_ sName: String, _ pcm: [Int16], rate: Int, channels: Int,
                   looped lp: Bool, loopType: Int, loopStart: Int, loopEnd: Int,
-                  baseNote: Int, noteStart: Int, noteEnd: Int, volume: Double = 1.0) -> RNSample? {
+                  baseNote: Int, noteStart: Int, noteEnd: Int, volume: Double = 1.0, finetune: Int = 0) -> RNSample? {
             guard !pcm.isEmpty else { return nil }
             let looped = lp && loopEnd > loopStart && loopEnd > 0
             let (audio, ext): (Data, String) = channels == 2
                 ? (Wav.encode(pcm, sampleRate: rate, channels: 2), "wav")
                 : (Flac.encode(pcm, sampleRate: rate), "flac")
             return RNSample(name: sName.isEmpty ? "Sample" : sName, audio: audio, audioExt: ext,
-                            volume: volume, transpose: 0,
+                            volume: volume, transpose: 0, finetune: finetune,
                             baseNote: max(0, min(119, baseNote)),
                             loopMode: looped ? modes[min(2, max(0, loopType))] : "Off",
                             loopStart: looped ? loopStart : 0,
@@ -322,7 +322,8 @@ enum TrackerRenoise {
                 make($0.name, $0.pcm, rate: $0.sampleRate, channels: $0.channels,
                      looped: $0.looped, loopType: $0.loopType, loopStart: $0.loopStart, loopEnd: $0.loopEnd,
                      baseNote: 48 - $0.transpose + noteOffset,
-                     noteStart: $0.noteStart + noteOffset, noteEnd: $0.noteEnd + noteOffset, volume: $0.volume)
+                     noteStart: $0.noteStart + noteOffset, noteEnd: $0.noteEnd + noteOffset,
+                     volume: $0.volume, finetune: $0.finetune)
             }
             if !rn.isEmpty { return RNInstrument(name: name, samples: rn) }
         }
@@ -332,7 +333,7 @@ enum TrackerRenoise {
                             looped: inst.looped, loopType: inst.loopType,
                             loopStart: inst.loopStart, loopEnd: inst.loopEnd,
                             baseNote: 48 - inst.transpose + noteOffset, noteStart: 0, noteEnd: 119,
-                            volume: inst.volume)
+                            volume: inst.volume, finetune: inst.finetune)
         else { return RNInstrument(name: name) }
         return RNInstrument(name: name, samples: [sm])
     }

@@ -152,6 +152,7 @@ enum Xmp {
             // Primary sample (subinstrument 0) → the instrument's top-level fields,
             // used by the flattening IR path and by single-sample output.
             inst.volume = Double(xmpb_sub_vol_at(modP, Int32(i), 0)) / 64.0
+            inst.finetune = max(-127, min(127, Int(xmpb_sub_fin_at(modP, Int32(i), 0))))
             if let prim = loadSample(Int(xmpb_sub_sid(modP, Int32(i)))) {
                 inst.sampleFrames = prim.pcm.count / max(1, prim.channels)
                 inst.looped = prim.looped; inst.loopType = prim.loopType
@@ -170,6 +171,7 @@ enum Xmp {
                     guard var s = loadSample(Int(xmpb_sub_sid_at(modP, Int32(i), Int32(sub)))) else { return }
                     s.transpose = Int(xmpb_sub_xpo_at(modP, Int32(i), Int32(sub)))
                     s.volume = Double(xmpb_sub_vol_at(modP, Int32(i), Int32(sub))) / 64.0
+                    s.finetune = max(-127, min(127, Int(xmpb_sub_fin_at(modP, Int32(i), Int32(sub)))))
                     s.noteStart = from; s.noteEnd = to
                     samples.append(s)
                 }
