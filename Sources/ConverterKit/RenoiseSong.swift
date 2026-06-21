@@ -80,6 +80,12 @@ struct RenoiseSong {
     var bpm: Double = 120
     var linesPerBeat: Int = 4
     var ticksPerLine: Int = 12
+    /// True when this song came from a tracker-module import (Renoise sets
+    /// SampleOffsetCompatibilityMode on MOD/XM/IT import, and so do we). Such
+    /// songs store the RAW module BPM with the speed in TicksPerLine, so the
+    /// quarter-note tempo must be recovered as 24·BPM/(rpb·TPL). A native Renoise
+    /// song stores its musical BPM directly and is read verbatim.
+    var isModuleImport: Bool = false
     var signatureNumerator: Int = 4
     var signatureDenominator: Int = 4
     var songName: String?
@@ -107,6 +113,7 @@ enum RenoiseReader {
             song.bpm = g.childDouble("BeatsPerMin") ?? 120
             song.linesPerBeat = g.childInt("LinesPerBeat") ?? 4
             song.ticksPerLine = g.childInt("TicksPerLine") ?? 12
+            song.isModuleImport = g.childBool("SampleOffsetCompatibilityMode") ?? false
             song.signatureNumerator = g.childInt("SignatureNumerator") ?? 4
             song.signatureDenominator = g.childInt("SignatureDenominator") ?? 4
             song.songName = g.childText("SongName")

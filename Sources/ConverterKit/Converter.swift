@@ -32,7 +32,6 @@ struct ConvertStats {
 enum ToIR {
     static func fromRenoise(_ rs: RenoiseSong, stats: inout ConvertStats) -> IRSong {
         var song = IRSong()
-        song.tempo = rs.bpm
         song.signatureNumerator = rs.signatureNumerator
         song.signatureDenominator = rs.signatureDenominator
         song.title = rs.songName
@@ -40,7 +39,27 @@ enum ToIR {
         song.comment = rs.comments.isEmpty ? nil
             : rs.comments.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let lpb = Double(max(1, rs.linesPerBeat))
+        // Beat grid + tempo. A tracker-module import (isModuleImport) stores the RAW
+        // module BPM with the speed in TicksPerLine over a flat LinesPerBeat of 4, so
+        // the quarter-note tempo and beat grid must be reconstructed exactly as the
+        // direct module→IR path does: rpb = 24/min(6, TPL) rows per beat (capping at
+        // the "normal" speed of 6), tempo = 24·BPM/(rpb·TPL). This makes the two
+        // import routes agree (EMP speed-12 → 62.5 not 125; scirreal speed-3 → 140 not
+        // 280). A native Renoise song stores its real musical BPM, so honour
+        // BeatsPerMin and the stored LinesPerBeat verbatim.
+        let tpl = max(1, rs.ticksPerLine)
+        let rpb: Double
+        let bpmScale: Double
+        if rs.isModuleImport {
+            rpb = 24.0 / Double(min(6, tpl))
+            bpmScale = 24.0 / (rpb * Double(tpl))
+        } else {
+            rpb = Double(max(1, rs.linesPerBeat))
+            bpmScale = 1.0
+        }
+        let lpb = rpb
+        func musicalBPM(_ bpm: Double) -> Double { bpm * bpmScale }
+        song.tempo = musicalBPM(rs.bpm)
 
         var irTracks = rs.tracks.map {
             IRTrack(role: $0.kind, name: $0.name, color: $0.color,
@@ -48,7 +67,7 @@ enum ToIR {
         }
 
         var offset = 0.0
-        var tempoEvents = [IRTempoPoint(time: 0, bpm: rs.bpm)]
+        var tempoEvents = [IRTempoPoint(time: 0, bpm: musicalBPM(rs.bpm))]
         for patternIndex in rs.sequence {
             guard patternIndex >= 0, patternIndex < rs.patterns.count else { continue }
             let pattern = rs.patterns[patternIndex]
@@ -59,7 +78,7 @@ enum ToIR {
                 for line in pt.lines {
                     for ec in line.effectColumns where ec.number == "ZT" {
                         if let bpm = ec.value.flatMap({ Int($0, radix: 16) }), bpm > 0 {
-                            tempoEvents.append(IRTempoPoint(time: offset + Double(line.index) / lpb, bpm: Double(bpm)))
+                            tempoEvents.append(IRTempoPoint(time: offset + Double(line.index) / lpb, bpm: musicalBPM(Double(bpm))))
                         }
                     }
                 }
@@ -239,6 +258,12 @@ enum ToRenoise {
         rs.docVersion = 67
         rs.bpm = song.tempo
         rs.linesPerBeat = lpb
+        // Renoise advances TicksPerLine ticks per line at 2.5/BPM s/tick, so a beat
+        // (lpb lines) lasts lpb·TPL·2.5/BPM s. Keeping lpb·TPL = 24 makes the
+        // quarter-note tempo equal `bpm` — i.e. a "normal" tracker speed of 6 at
+        // 4 lines/beat. This also round-trips symmetrically with ToIR.fromRenoise,
+        // which regroups lines into beats via rpb = 24/min(6, TicksPerLine).
+        rs.ticksPerLine = max(1, Int((24.0 / Double(lpb)).rounded()))
         rs.signatureNumerator = song.signatureNumerator
         rs.signatureDenominator = song.signatureDenominator
         rs.songName = song.title

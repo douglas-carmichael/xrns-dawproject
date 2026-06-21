@@ -171,34 +171,39 @@ enum TrackerRenoise {
 
             var nc = RNNoteColumn()
             var hasColumn = false
+            // The note column holds either a key-off or a pitched note. The
+            // instrument / volume / panning sub-columns are INDEPENDENT of the
+            // note and apply on a note-off line too: a tracker key-off very often
+            // carries a volume-column value — classically "set volume 0" to
+            // silence a still-ringing or looping (percussion) sample. Renoise's
+            // own import preserves these on the OFF line; gating them behind a
+            // pitched note drops them, leaving the sample audible — phantom hits.
             if cell.noteOff {
                 nc.note = "OFF"
                 hasColumn = true
-            } else {
-                if let n = cell.note {
-                    // Map libxmp's normalised note onto Renoise's displayed note
-                    // (per-format offset); the sample's BaseNote shifts to match, so
-                    // pitch is unchanged. Matches Renoise's own MOD/XM/IT import.
-                    nc.note = Pitch.renoiseName(fromValue: n + noteOffset)
-                    hasColumn = true
-                }
-                if let inst = cell.instrument {
-                    nc.instrument = String(format: "%02X", min(0xFE, max(0, inst)))
-                    hasColumn = true
-                }
-                if let v = cell.volume {
-                    // libxmp's ev.vol is 1-based (1…65 = volume 0…64); Renoise's
-                    // volume column is 0…0x80, so value = (v − 1) × 2.
-                    nc.volume = String(format: "%02X", min(0x80, max(0, (v - 1) * 2)))
-                    hasColumn = true
-                }
-                if let pan = TrackerEffects.panning(type: cell.fx1Type, param: cell.fx1Param, format: format) {
-                    nc.panning = pan
-                    hasColumn = true
-                } else if let pan = TrackerEffects.secondaryPanning(type: cell.fx2Type, param: cell.fx2Param, format: format) {
-                    nc.panning = pan
-                    hasColumn = true
-                }
+            } else if let n = cell.note {
+                // Map libxmp's normalised note onto Renoise's displayed note
+                // (per-format offset); the sample's BaseNote shifts to match, so
+                // pitch is unchanged. Matches Renoise's own MOD/XM/IT import.
+                nc.note = Pitch.renoiseName(fromValue: n + noteOffset)
+                hasColumn = true
+            }
+            if let inst = cell.instrument {
+                nc.instrument = String(format: "%02X", min(0xFE, max(0, inst)))
+                hasColumn = true
+            }
+            if let v = cell.volume {
+                // libxmp's ev.vol is 1-based (1…65 = volume 0…64); Renoise's
+                // volume column is 0…0x80, so value = (v − 1) × 2.
+                nc.volume = String(format: "%02X", min(0x80, max(0, (v - 1) * 2)))
+                hasColumn = true
+            }
+            if let pan = TrackerEffects.panning(type: cell.fx1Type, param: cell.fx1Param, format: format) {
+                nc.panning = pan
+                hasColumn = true
+            } else if let pan = TrackerEffects.secondaryPanning(type: cell.fx2Type, param: cell.fx2Param, format: format) {
+                nc.panning = pan
+                hasColumn = true
             }
 
             // Effect columns: the main effect (fx1) takes the first column. An
