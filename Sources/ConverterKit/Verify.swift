@@ -84,6 +84,7 @@ public enum Verify {
         var active = [Bool](repeating: false, count: m.channels)
         var mem = [Int](repeating: 0, count: m.channels)
         var curInst = [Int](repeating: -1, count: m.channels)
+        var curSpeed = speed   // ticks/row, tracked through mid-song speed changes
         var div: [(pat: Int, row: Int, ch: Int, mine: Int, lib: Int, myNote: Int, libNote: Int)] = []
         var envCells = 0    // active cells on enveloped instruments — volume is envelope-driven, not model-checkable
         var gv = 64, gvSlide = 0, gvCells = 0   // global volume (0…64) and cells it explains
@@ -99,10 +100,11 @@ public enum Verify {
             // its effect is isolated below as a known gap, not counted as a volume bug.
             if gvSlide != 0 { gv = max(0, min(64, gv + gvSlide)); gvSlide = 0 }   // a prior row's slide lands now
             for c in pat[f.row] {
+                if let sp = c.speed { curSpeed = max(1, sp) }                            // mid-song speed change (drives per-tick slide rates)
                 for (t, pr) in [(c.fx1Type, c.fx1Param), (c.fx2Type, c.fx2Param)] {
                     if t == 0x10 { gv = min(64, pr) }                                    // set global volume
                     else if t == 0x11 { let up = pr >> 4, dn = pr & 0x0F                 // global volume slide (defer like channel slides)
-                        if up > 0 { gvSlide = up * speed } else if dn > 0 { gvSlide = -dn * speed } }
+                        if up > 0 { gvSlide = up * curSpeed } else if dn > 0 { gvSlide = -dn * curSpeed } }
                 }
             }
             for ch in 0..<m.channels where ch < pat[f.row].count {
@@ -153,8 +155,8 @@ public enum Verify {
                     let up = p >> 4, dn = p & 0x0F
                     if fineFmt && dn == 0xF && up != 0 { cur[ch] = min(64, cur[ch] + up) }
                     else if fineFmt && up == 0xF && dn != 0 { cur[ch] = max(0, cur[ch] - dn) }
-                    else if up > 0 { regSlide = up * speed }
-                    else if dn > 0 { regSlide = -dn * speed }
+                    else if up > 0 { regSlide = up * curSpeed }
+                    else if dn > 0 { regSlide = -dn * curSpeed }
                 }
                 let mine = active[ch] ? cur[ch] : 0
                 let lib = Int((Double(f.vol[ch]) * scale).rounded())
