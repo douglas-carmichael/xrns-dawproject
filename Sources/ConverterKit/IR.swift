@@ -62,6 +62,11 @@ struct IRNote {
     /// channel layout, where one track plays many instruments; nil means "use the
     /// track's own instrument" (the instrument layout, where track == instrument).
     var instrument: Int? = nil
+    /// Within-note volume movement (volume slides, retrigger swells) as CC11
+    /// expression points: time in beats relative to the note start, value 0…1.
+    /// Emitted to the dawproject so modern instruments follow the original
+    /// dynamics a single velocity can't capture. Empty when the note is flat.
+    var expression: [(time: Double, value: Double)] = []
 }
 
 /// A tempo change at an arrangement beat position. Tempo holds (step, not ramp)

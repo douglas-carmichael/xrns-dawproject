@@ -100,13 +100,24 @@ enum DawProjectWriter {
                 if let nm = clip.name { clipEl.attr("name", nm) }
                 let notes = clipEl.element("Notes")
                 for n in clip.notes {
-                    notes.add(XML("Note")
+                    let noteEl = XML("Note")
                         .attr("time", dpNum(n.start))
                         .attr("duration", dpNum(n.length))
                         .attr("channel", 0)
                         .attr("key", n.key)
                         .attr("vel", dpNum(n.velocity))
-                        .attr("rel", dpNum(n.velocity)))
+                        .attr("rel", dpNum(n.velocity))
+                    // Within-note dynamics → CC11 (expression) so modern instruments
+                    // follow the original swells/fades. Times are beats from the note.
+                    if !n.expression.isEmpty {
+                        let pts = noteEl.element("Points").attr("unit", "normalized").attr("id", ids.next())
+                        pts.add(XML("Target").attr("expression", "channelController")
+                            .attr("controller", 11).attr("channel", 0))
+                        for e in n.expression {
+                            pts.add(XML("RealPoint").attr("time", dpNum(e.time)).attr("value", dpNum(e.value)))
+                        }
+                    }
+                    notes.add(noteEl)
                 }
             }
         }

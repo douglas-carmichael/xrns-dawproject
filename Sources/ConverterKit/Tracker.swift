@@ -203,6 +203,64 @@ enum Tracker {
         }
         for ch in 0..<m.channels { if let o = open[ch] { close(o, channel: ch, at: beatOffset) } }
 
+        // --- Within-note volume dynamics → per-note CC11 expression ---
+        // Re-walk the order computing each channel's running volume (Cxx set-volume,
+        // volume slides, Qxy retrigger swells) on the same beat grid, recording a
+        // point whenever it moves; then slice each note's segment out. The note's
+        // velocity is the start level — this captures the movement a velocity can't.
+        var volCurve = [[(Double, Double)]](repeating: [], count: m.channels)
+        do {
+            func applyVol(_ cell: TCell, _ v: inout Int, _ vmem: inout Int, _ qmem: inout Int, _ spd: Int) {
+                switch cell.fx1Type {
+                case 0x0C: v = min(64, max(0, cell.fx1Param))               // Cxx set volume
+                case 0x0A:                                                  // Dxy/Axy volume slide
+                    var p = cell.fx1Param; if p != 0 { vmem = p } else { p = vmem }
+                    let up = p >> 4, dn = p & 0x0F
+                    if up == 0xF && dn != 0 { v = max(0, v - dn) }          // DFy fine down
+                    else if dn == 0xF && up != 0 { v = min(64, v + up) }    // DxF fine up
+                    else if up > 0 { v = min(64, v + up * spd) }
+                    else if dn > 0 { v = max(0, v - dn * spd) }
+                case 0x1B:                                                  // Qxy retrigger volume change → fade
+                    var p = cell.fx1Param; if p != 0 { qmem = p } else { p = qmem }
+                    let x = p >> 4
+                    let amt: Int
+                    switch x { case 1, 9: amt = 1; case 2, 0xA: amt = 2; case 3, 0xB: amt = 4
+                               case 4, 0xC: amt = 8; case 5, 0xD: amt = 16
+                               case 6, 0xE: amt = 8; case 7, 0xF: amt = 16; default: amt = 0 }
+                    if x >= 9 { v = min(64, v + amt * spd) } else if x != 0 && x != 8 { v = max(0, v - amt * spd) }
+                default: break
+                }
+            }
+            var v = [Int](repeating: 64, count: m.channels)
+            var vmem = [Int](repeating: 0, count: m.channels), qmem = [Int](repeating: 0, count: m.channels)
+            var lastRec = [Int](repeating: Int.min, count: m.channels)
+            var spd = startSpeed, bo = 0.0
+            for patternIndex in m.order {
+                guard patternIndex >= 0, patternIndex < m.patterns.count else { continue }
+                let pattern = m.patterns[patternIndex]
+                for (r, row) in pattern.enumerated() {
+                    let rowBeat = bo + Double(r) / rpb
+                    for ch in 0..<min(m.channels, row.count) {
+                        let cell = row[ch]
+                        if let sp = speedChange(cell) { spd = sp }
+                        if cell.note != nil { v[ch] = cell.volume.map { min(64, max(0, $0 - 1)) } ?? 64 }
+                        applyVol(cell, &v[ch], &vmem[ch], &qmem[ch], spd)
+                        if v[ch] != lastRec[ch] { volCurve[ch].append((rowBeat, Double(v[ch]) / 64.0)); lastRec[ch] = v[ch] }
+                    }
+                }
+                bo += Double(pattern.count) / rpb
+            }
+        }
+        // Attach each note's curve segment — only when the volume actually moves
+        // within the note (otherwise the single velocity already says it all).
+        for i in parsed.indices {
+            let s = parsed[i].note.start, e = s + parsed[i].note.length
+            let pts = volCurve[parsed[i].channel].filter { $0.0 >= s - 1e-6 && $0.0 < e - 1e-6 }
+            if Set(pts.map { Int(($0.1 * 64).rounded()) }).count >= 2 {
+                parsed[i].note.expression = pts.map { (max(0, $0.0 - s), $0.1) }
+            }
+        }
+
         let songEnd = max(beatOffset, parsed.map { $0.note.start + $0.note.length }.max() ?? 0)
         func info(_ n: Int) -> TInstrument? { (n >= 1 && n <= m.instruments.count) ? m.instruments[n - 1] : nil }
         func extracted(_ n: Int, name: String, comment: String?) -> ExtractedSample? {
