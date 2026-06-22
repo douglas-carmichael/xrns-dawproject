@@ -83,6 +83,8 @@ struct Options {
     var verbose = false
 }
 
+let toolVersion = "1.0.1"
+
 let usage = """
 xrnsdaw — convert between Renoise (.xrns), DAWproject (.dawproject), MIDI (.mid)
 and Polyend Tracker projects, and import ~50 tracker module formats.
@@ -92,13 +94,17 @@ USAGE:
 
 OPTIONS:
   -o, --output <path>   Output file (or folder, for a Polyend target)
-      --to <format>     Target: xrns | dawproject | midi | polyend
+      --to <format>     Target: xrns | dawproject | midi | polyend (experimental)
       --lpb <n>         Lines/steps-per-beat grid (.xrns and Polyend targets)
       --layout <mode>   Module track layout: channel | instrument
   -v, --verbose         Print a conversion summary
       --verify          Diff the conversion's volume envelope against libxmp's
                         own playback (any format) — no output file written
   -h, --help            Show this help
+      --version         Show the version
+
+NOTE: Polyend Tracker export is experimental — quantised, monophonic per track,
+      and not yet tested on hardware.
 """
 
 func parseArguments(_ args: [String]) throws -> Options {
@@ -389,6 +395,10 @@ private func convert(_ opts: Options) throws {
 public func runCLI(_ args: [String]) -> Int32 {
     if args.contains("-h") || args.contains("--help") {
         print(usage)
+        return 0
+    }
+    if args.contains("--version") {
+        print("xrnsdaw \(toolVersion)")
         return 0
     }
     if args.contains("--verify") {

@@ -60,12 +60,14 @@ xrnsdaw <input> [options]
 
 Options:
   -o, --output <path>   Output file, or output folder for a Polyend target
-      --to <format>     Target: "xrns", "dawproject", "midi" or "polyend"
+      --to <format>     Target: "xrns", "dawproject", "midi" or "polyend" (experimental)
       --lpb <n>         Lines/steps-per-beat grid for .xrns or Polyend targets
       --layout <mode>   Legacy-module track layout: "channel" or "instrument" (see below).
                         Default: channel for .xrns/.polyend, instrument for .dawproject/.mid
   -v, --verbose         Print a conversion summary
+      --verify          Diff a module's conversion volume against libxmp's playback
   -h, --help            Show help
+      --version         Show the version
 ```
 
 The source format is taken from the input extension; a folder (or project.mt) is a
@@ -74,8 +76,9 @@ tracker module identified by content. The target is --to, else the -o extension,
 else: xrns/midi/module/polyend → dawproject (polyend/dawproject → xrns).
 
 A Polyend Tracker project is a folder (project.mt + patterns/ + instruments/ +
-samples/). Export quantises to the step grid and is monophonic per track; stereo
-samples are preserved (embedded as WAV in .xrns).
+samples/). **Polyend export is experimental and not yet tested on hardware** —
+export quantises to the step grid and is monophonic per track; stereo samples are
+preserved (embedded as WAV in .xrns).
 
 ```sh
 xrnsdaw "My Song.xrns"                 # → "My Song.dawproject"
