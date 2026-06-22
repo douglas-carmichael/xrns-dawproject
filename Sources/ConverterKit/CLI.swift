@@ -83,7 +83,7 @@ struct Options {
     var verbose = false
 }
 
-let toolVersion = "1.0.1"
+let toolVersion = "1.0.2"
 
 let usage = """
 xrnsdaw — convert between Renoise (.xrns), DAWproject (.dawproject), MIDI (.mid)

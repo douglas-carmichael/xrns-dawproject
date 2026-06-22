@@ -168,12 +168,68 @@ enum Tracker {
             if o.offset > 0 { offsetsUsed[o.instrument, default: []].insert(o.offset) }
         }
 
+        // Resolve the actually-played row segments. Patterns can end early (pattern
+        // break Dxx), be re-ordered (position jump Bxx), or repeat a row range
+        // (pattern loop E6x / S3M-IT SBx). libxmp normalises EVERY format onto
+        // FX_BREAK 0x0D, FX_JUMP 0x0B and FX_EXTENDED 0x0E sub 0x6, so this is
+        // format-agnostic. Without it a pattern that breaks early plays its leftover
+        // rows as dead time (a phantom pause) and a loop's repeats are dropped.
+        // A loop uses one global target + count (the ST3/IT model, and the common
+        // single-channel MOD usage).
+        func playbackSegments() -> [(pat: Int, start: Int, end: Int)] {
+            var segs: [(pat: Int, start: Int, end: Int)] = []
+            func emit(_ pat: Int, _ a: Int, _ b: Int) { if a <= b { segs.append((pat, a, b)) } }
+            var visitedEntry = Set<Int>()     // order entries begun — stop backward jump loops
+            var i = 0, entryRow = 0, emitted = 0
+            let rowCap = 300_000              // backstop against malformed/infinite loops
+            while i >= 0, i < m.order.count, emitted < rowCap {
+                let pat = m.order[i]
+                guard pat >= 0, pat < m.patterns.count else { i += 1; entryRow = 0; continue }
+                let pattern = m.patterns[pat]
+                guard entryRow < pattern.count else { i += 1; entryRow = 0; continue }
+                if !visitedEntry.insert((i << 8) | (entryRow & 0xFF)).inserted { break }  // looped → song end
+                // Walk this order entry row-by-row, honoring an in-pattern loop, until
+                // a break/jump or the pattern ends. Emit contiguous runs as segments.
+                var r = entryRow, runStart = entryRow
+                var loopRow = entryRow, loopCount = 0
+                var nextIndex = i + 1, nextRow = 0, brokeOut = false
+                while r < pattern.count, emitted < rowCap {
+                    emitted += 1
+                    var jumpTo: Int? = nil, breakTo: Int? = nil, loopX = -1
+                    for ch in 0..<min(m.channels, pattern[r].count) {
+                        let c = pattern[r][ch]
+                        if c.fx1Type == 0x0B { jumpTo = c.fx1Param }                 // Bxx position jump
+                        else if c.fx1Type == 0x0D { breakTo = min(63, (c.fx1Param >> 4) * 10 + (c.fx1Param & 0x0F)) }  // Dxx break
+                        else if c.fx1Type == 0x0E, c.fx1Param >> 4 == 0x6 {          // E6x / SBx pattern loop
+                            let x = c.fx1Param & 0x0F
+                            if x == 0 { loopRow = r } else { loopX = x }
+                        }
+                    }
+                    if jumpTo != nil || breakTo != nil {            // break/jump ends the entry here
+                        emit(pat, runStart, r)
+                        if let j = jumpTo { nextIndex = j; nextRow = 0 } else { nextIndex = i + 1; nextRow = breakTo! }
+                        brokeOut = true
+                        break
+                    }
+                    if loopX > 0 {                                  // E6x end-of-loop: repeat the body
+                        if loopCount == 0 { loopCount = loopX } else { loopCount -= 1 }
+                        if loopCount > 0 { emit(pat, runStart, r); r = loopRow; runStart = r; continue }
+                    }
+                    r += 1
+                }
+                if !brokeOut { emit(pat, runStart, min(r, pattern.count) - 1) }
+                i = nextIndex; entryRow = nextRow
+            }
+            return segs
+        }
+        let segments = playbackSegments()
+
         var beatOffset = 0.0
-        for patternIndex in m.order {
-            guard patternIndex >= 0, patternIndex < m.patterns.count else { continue }
-            let pattern = m.patterns[patternIndex]
-            for (r, row) in pattern.enumerated() {
-                let rowBeat = beatOffset + Double(r) / rpb
+        for seg in segments {
+            let pattern = m.patterns[seg.pat]
+            for r in seg.start...seg.end {
+                let row = pattern[r]
+                let rowBeat = beatOffset + Double(r - seg.start) / rpb
                 for ch in 0..<min(m.channels, row.count) {
                     let cell = row[ch]
                     if let sp = speedChange(cell) {
@@ -199,7 +255,7 @@ enum Tracker {
                     }
                 }
             }
-            beatOffset += Double(pattern.count) / rpb
+            beatOffset += Double(seg.end - seg.start + 1) / rpb
         }
         for ch in 0..<m.channels { if let o = open[ch] { close(o, channel: ch, at: beatOffset) } }
 
@@ -235,11 +291,11 @@ enum Tracker {
             var vmem = [Int](repeating: 0, count: m.channels), qmem = [Int](repeating: 0, count: m.channels)
             var lastRec = [Int](repeating: Int.min, count: m.channels)
             var spd = startSpeed, bo = 0.0
-            for patternIndex in m.order {
-                guard patternIndex >= 0, patternIndex < m.patterns.count else { continue }
-                let pattern = m.patterns[patternIndex]
-                for (r, row) in pattern.enumerated() {
-                    let rowBeat = bo + Double(r) / rpb
+            for seg in segments {
+                let pattern = m.patterns[seg.pat]
+                for r in seg.start...seg.end {
+                    let row = pattern[r]
+                    let rowBeat = bo + Double(r - seg.start) / rpb
                     for ch in 0..<min(m.channels, row.count) {
                         let cell = row[ch]
                         if let sp = speedChange(cell) { spd = sp }
@@ -248,7 +304,7 @@ enum Tracker {
                         if v[ch] != lastRec[ch] { volCurve[ch].append((rowBeat, Double(v[ch]) / 64.0)); lastRec[ch] = v[ch] }
                     }
                 }
-                bo += Double(pattern.count) / rpb
+                bo += Double(seg.end - seg.start + 1) / rpb
             }
         }
         // Attach each note's curve segment — only when the volume actually moves

@@ -119,4 +119,72 @@ final class TrackerTests: XCTestCase {
         XCTAssertTrue(xml.contains("<Number>0S</Number>"))
         XCTAssertTrue(xml.contains("<Value>20</Value>"))
     }
+
+    // MARK: - Pattern flow control (break Dxx / jump Bxx / loop E6x·SBx)
+
+    /// One cell with an optional note + one raw libxmp effect (FX_* in effects.h).
+    private func cell(note: Int? = nil, inst: Int? = nil, fxt: Int = 0, fxp: Int = 0) -> TCell {
+        var c = TCell(); c.note = note; c.instrument = inst; c.fx1Type = fxt; c.fx1Param = fxp; return c
+    }
+
+    /// Assemble a single-instrument module (speed 6 → 4 rows/beat) from rows given
+    /// as `[row: [channel: TCell]]` sparse maps, so a test only spells out the cells
+    /// it cares about.
+    private func flowModule(order: [Int], patterns: [[Int: [Int: TCell]]], rows: Int = 8, channels: Int = 2) -> TrackerModule {
+        var m = TrackerModule(format: "MOD")
+        m.channels = channels
+        m.order = order
+        m.instruments = [TInstrument(name: "s", sampleFrames: 4, pcm: [0, 1, 2, 3], sampleRate: 8363)]
+        m.patterns = patterns.map { pat in
+            (0..<rows).map { r in (0..<channels).map { ch in pat[r]?[ch] ?? TCell() } }
+        }
+        return m
+    }
+
+    /// Notes' (key, start) pairs, sorted by start then key — the played timeline.
+    private func timeline(_ song: IRSong) -> [(key: Int, start: Double)] {
+        song.tracks.flatMap { $0.clips.flatMap { $0.notes } }
+            .map { ($0.key, $0.start) }
+            .sorted { $0.1 != $1.1 ? $0.1 < $1.1 : $0.0 < $1.0 }
+    }
+
+    func testPatternBreakTruncatesAndPullsFollowingPatternEarly() {
+        // Pattern 0: note at row 0, pattern break (FX_BREAK 0x0D) at row 4.
+        // Pattern 1: note at row 0. Order [0, 1]. The break ends pattern 0 after
+        // row 4 (5 rows = 1.25 beats), so pattern 1's note lands at beat 1.25 — not
+        // 2.0 (which is where playing all 8 rows would put it).
+        let m = flowModule(order: [0, 1], patterns: [
+            [0: [0: cell(note: 48, inst: 1)], 4: [0: cell(fxt: 0x0D, fxp: 0)]],
+            [0: [0: cell(note: 50, inst: 1)]],
+        ])
+        let t = timeline(Tracker.toIR(m))
+        XCTAssertEqual(t.map { $0.key }, [60, 62])
+        XCTAssertEqual(t[1].start, 1.25, accuracy: 1e-9)   // pulled early by the break
+    }
+
+    func testPositionJumpSkipsInterveningPattern() {
+        // Pattern 0 jumps (FX_JUMP 0x0B) to order 2 at row 4, so order 1 never plays.
+        let m = flowModule(order: [0, 1, 2], patterns: [
+            [0: [0: cell(note: 48, inst: 1)], 4: [0: cell(fxt: 0x0B, fxp: 2)]],
+            [0: [0: cell(note: 50, inst: 1)]],   // skipped
+            [0: [0: cell(note: 52, inst: 1)]],
+        ])
+        let t = timeline(Tracker.toIR(m))
+        XCTAssertEqual(t.map { $0.key }, [60, 64])          // 62 (order 1) never sounds
+        XCTAssertEqual(t[1].start, 1.25, accuracy: 1e-9)
+    }
+
+    func testPatternLoopRepeatsBody() {
+        // Loop start (E60) at row 2, loop end (E62 → 2 repeats) at row 4 carrying a
+        // note. Body rows 2…4 play 1 + 2 = 3 times, so that note sounds three times.
+        let m = flowModule(order: [0], patterns: [[
+            0: [0: cell(note: 48, inst: 1)],
+            2: [0: cell(fxt: 0x0E, fxp: 0x60)],
+            4: [0: cell(note: 50, inst: 1, fxt: 0x0E, fxp: 0x62)],
+        ]])
+        let t = timeline(Tracker.toIR(m))
+        XCTAssertEqual(t.filter { $0.key == 62 }.count, 3)  // looped body's note plays 3×
+        // First two passes' notes land before the third (1.0, 1.75, 2.5 beats).
+        XCTAssertEqual(t.filter { $0.key == 62 }.map { $0.start }, [1.0, 1.75, 2.5])
+    }
 }
