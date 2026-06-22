@@ -143,8 +143,14 @@ enum Tracker {
 
         // musical BPM = 24·BPM / (rowsPerBeat·speed): equals the tracker BPM at the
         // start; mid-song speed changes scale it. The direct Renoise path keeps raw
-        // BPM + TicksPerLine=speed and is unaffected.
-        func musicalBPM(_ bpm: Double, _ speed: Int) -> Double { 24.0 * bpm / (rpb * Double(max(1, speed))) }
+        // BPM + TicksPerLine=speed and is unaffected. Clamp to the DAWproject tempo
+        // range [20, 999] we declare on the Transport: a very high speed (e.g. an
+        // ending-hold like 2ND_PM.S3M's A7F = speed 127 → 3 BPM) would otherwise emit
+        // an out-of-range tempo that importers floor to 20 — reading as the whole
+        // song's tempo. The row-hold's slow feel is kept at the 20 BPM floor.
+        func musicalBPM(_ bpm: Double, _ speed: Int) -> Double {
+            min(999.0, max(20.0, 24.0 * bpm / (rpb * Double(max(1, speed)))))
+        }
 
         struct Open { var startBeat: Double; var key: Int; var velocity: Double; var instrument: Int; var offset: Int }
         struct ParsedNote { var channel: Int; var instrument: Int; var note: IRNote }
@@ -190,19 +196,32 @@ enum Tracker {
                 if !visitedEntry.insert((i << 8) | (entryRow & 0xFF)).inserted { break }  // looped → song end
                 // Walk this order entry row-by-row, honoring an in-pattern loop, until
                 // a break/jump or the pattern ends. Emit contiguous runs as segments.
+                // Pattern loops (E6x) are PER-CHANNEL: each channel has its own loop
+                // start (E60) and remaining count, matching ProTracker/libxmp. A single
+                // global loop lets one channel's loop re-enter and re-arm another's and
+                // run forever — e.g. 101.1.MOD, where ch1 loops rows 0-31 while ch3's
+                // lone E61 at row 63 jumps back to row 0. Each E6x position also fires
+                // at most once (`loopDone`), so a re-entry can't re-arm a finished loop.
                 var r = entryRow, runStart = entryRow
-                var loopRow = entryRow, loopCount = 0
+                let nch = max(1, m.channels)
+                var loopStart = [Int](repeating: entryRow, count: nch)
+                var loopCount = [Int](repeating: 0, count: nch)
+                var loopDone = Set<Int>()                       // ch*256+row of a finished E6x
                 var nextIndex = i + 1, nextRow = 0, brokeOut = false
                 while r < pattern.count, emitted < rowCap {
                     emitted += 1
-                    var jumpTo: Int? = nil, breakTo: Int? = nil, loopX = -1
-                    for ch in 0..<min(m.channels, pattern[r].count) {
+                    var jumpTo: Int? = nil, breakTo: Int? = nil, loopBack: Int? = nil
+                    for ch in 0..<min(nch, pattern[r].count) {
                         let c = pattern[r][ch]
                         if c.fx1Type == 0x0B { jumpTo = c.fx1Param }                 // Bxx position jump
                         else if c.fx1Type == 0x0D { breakTo = min(63, (c.fx1Param >> 4) * 10 + (c.fx1Param & 0x0F)) }  // Dxx break
                         else if c.fx1Type == 0x0E, c.fx1Param >> 4 == 0x6 {          // E6x / SBx pattern loop
                             let x = c.fx1Param & 0x0F
-                            if x == 0 { loopRow = r } else { loopX = x }
+                            if x == 0 { loopStart[ch] = r }                         // E60: this channel's loop start
+                            else if !loopDone.contains(ch * 256 + r) {              // E6x: loop back x times, once
+                                if loopCount[ch] == 0 { loopCount[ch] = x } else { loopCount[ch] -= 1 }
+                                if loopCount[ch] > 0 { loopBack = loopStart[ch] } else { loopDone.insert(ch * 256 + r) }
+                            }
                         }
                     }
                     if jumpTo != nil || breakTo != nil {            // break/jump ends the entry here
@@ -211,10 +230,7 @@ enum Tracker {
                         brokeOut = true
                         break
                     }
-                    if loopX > 0 {                                  // E6x end-of-loop: repeat the body
-                        if loopCount == 0 { loopCount = loopX } else { loopCount -= 1 }
-                        if loopCount > 0 { emit(pat, runStart, r); r = loopRow; runStart = r; continue }
-                    }
+                    if let t = loopBack { emit(pat, runStart, r); r = t; runStart = t; continue }   // repeat the body
                     r += 1
                 }
                 if !brokeOut { emit(pat, runStart, min(r, pattern.count) - 1) }
@@ -274,6 +290,7 @@ enum Tracker {
                     let up = p >> 4, dn = p & 0x0F
                     if up == 0xF && dn != 0 { v = max(0, v - dn) }          // DFy fine down
                     else if dn == 0xF && up != 0 { v = min(64, v + up) }    // DxF fine up
+                    else if m.format == "S3M" && up > 0 && dn > 0 { v = max(0, v - dn * spd) }  // ST3 priority-down (Dxy both set)
                     else if up > 0 { v = min(64, v + up * spd) }
                     else if dn > 0 { v = max(0, v - dn * spd) }
                 case 0x1B:                                                  // Qxy retrigger volume change → fade

@@ -44,6 +44,12 @@ enum TrackerEffects {
             let up = q >> 4, dn = q & 0x0F
             if fineFmt && dn == 0xF && up != 0 { return ec("0I", up << 4) }
             if fineFmt && up == 0xF && dn != 0 { return ec("0O", dn << 4) }
+            // When BOTH nibbles are set, ScreamTracker 3 gives the DOWN slide
+            // priority (libxmp QUIRK_VOLPDN, S3M only — not IT/MOD/XM; effects.c
+            // even names Skaven's 2nd Reality: "D7 => pri down"). Reading the high
+            // nibble instead turned D7 into a full-volume fade-in (0ID0) — a blast
+            // where the part should fade out. IT/MOD/XM keep up-priority.
+            if format == "S3M", up != 0, dn != 0 { return ec("0O", dn << 4) }
             return up > 0 ? ec("0I", up << 4) : ec("0O", dn << 4)
         }
 

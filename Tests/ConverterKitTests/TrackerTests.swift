@@ -174,6 +174,58 @@ final class TrackerTests: XCTestCase {
         XCTAssertEqual(t[1].start, 1.25, accuracy: 1e-9)
     }
 
+    func testPatternLoopPerChannelTerminates() {
+        // ch0 loops rows 2-6 (E60@2, E62@6); ch1 has a lone E61@8 with no E60 of its
+        // own. A single global loop let ch1 re-enter and re-arm ch0's loop forever
+        // (the 101.1.MOD blowup that hit the row cap). Per-channel state + fire-once
+        // must terminate with a small, bounded note count.
+        let m = flowModule(order: [0], patterns: [[
+            0: [0: cell(note: 48, inst: 1)],
+            2: [0: cell(fxt: 0x0E, fxp: 0x60)],
+            6: [0: cell(note: 50, inst: 1, fxt: 0x0E, fxp: 0x62)],
+            8: [1: cell(fxt: 0x0E, fxp: 0x61)],
+        ]], rows: 16, channels: 2)
+        let notes = Tracker.toIR(m).tracks.flatMap { $0.clips.flatMap { $0.notes } }
+        XCTAssertGreaterThan(notes.count, 0)
+        XCTAssertLessThan(notes.count, 100, "per-channel loop must terminate, not blow up")
+    }
+
+    func testExtremeSpeedClampsTempoToValidRange() {
+        // A very high speed (an ending-hold like 2ND_PM.S3M's A7F = speed 127) computes
+        // a sub-20 BPM tempo that DAWs floor to 20, reading as the whole song's tempo.
+        // Every tempo-map point must stay within the declared [20, 999] range.
+        var slow = TCell(); slow.speed = 200
+        let m = flowModule(order: [0], patterns: [[
+            0: [0: cell(note: 48, inst: 1)],
+            8: [0: slow],
+        ]], rows: 16, channels: 1)
+        let song = Tracker.toIR(m)
+        XCTAssertFalse(song.tempoMap.isEmpty)
+        for p in song.tempoMap {
+            XCTAssertGreaterThanOrEqual(p.bpm, 20.0, "tempo must not fall below the DAWproject floor")
+            XCTAssertLessThanOrEqual(p.bpm, 999.0)
+        }
+    }
+
+    func testS3MVolumeSlideBothNibblesSlidesDown() {
+        // ScreamTracker 3 gives the DOWN slide priority when both nibbles of a Dxy
+        // volume slide are set (libxmp QUIRK_VOLPDN — Skaven's 2nd Reality uses D7).
+        // It must become a fade-OUT by the low nibble (0O70), not a fade-IN by the
+        // high nibble (0ID0), which blasted the part to full volume — a jackhammer.
+        let s3m = TrackerEffects.effectColumn(type: 0x0A, param: 0xD7, format: "S3M")
+        XCTAssertEqual(s3m?.number, "0O")
+        XCTAssertEqual(s3m?.value, "70")
+        // IT/MOD/XM keep up-priority (no VOLPDN): D7 → fade in by the high nibble.
+        for fmt in ["IT", "MOD", "XM"] {
+            let c = TrackerEffects.effectColumn(type: 0x0A, param: 0xD7, format: fmt)
+            XCTAssertEqual(c?.number, "0I", "\(fmt) keeps up-priority")
+            XCTAssertEqual(c?.value, "D0", "\(fmt) keeps up-priority")
+        }
+        // Single-nibble S3M slides are unchanged: D07 → down 7, D70 → up 7.
+        XCTAssertEqual(TrackerEffects.effectColumn(type: 0x0A, param: 0x07, format: "S3M")?.number, "0O")
+        XCTAssertEqual(TrackerEffects.effectColumn(type: 0x0A, param: 0x70, format: "S3M")?.number, "0I")
+    }
+
     func testPatternLoopRepeatsBody() {
         // Loop start (E60) at row 2, loop end (E62 → 2 repeats) at row 4 carrying a
         // note. Body rows 2…4 play 1 + 2 = 3 times, so that note sounds three times.

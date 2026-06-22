@@ -165,6 +165,7 @@ public enum Verify {
                     let up = p >> 4, dn = p & 0x0F
                     if fineFmt && dn == 0xF && up != 0 { cur[ch] = min(64, cur[ch] + up) }
                     else if fineFmt && up == 0xF && dn != 0 { cur[ch] = max(0, cur[ch] - dn) }
+                    else if m.format == "S3M" && up > 0 && dn > 0 { regSlide = -dn * curSpeed }  // ST3 priority-down (QUIRK_VOLPDN)
                     else if up > 0 { regSlide = up * curSpeed }
                     else if dn > 0 { regSlide = -dn * curSpeed }
                 }
