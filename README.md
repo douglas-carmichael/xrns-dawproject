@@ -16,8 +16,8 @@ MED and many more) so old compositions can be re-orchestrated in a modern DAW.
 Written in Swift with **no external/system dependencies** — XML parsing,
 ZIP/DEFLATE, and MIDI are implemented in-package, and the tracker parser
 ([libxmp](https://github.com/libxmp/libxmp), MIT) is **vendored and compiled from
-source** — so a single `swift build` runs identically on **macOS, Linux and
-Windows**. The binary is called `xrnsdaw`.
+source** — so a single `swift build` runs identically on **macOS and Linux**.
+The binary is called `xrnsdaw`.
 
 ## Building
 
@@ -46,9 +46,12 @@ You only need a [Swift toolchain](https://www.swift.org/install/) (5.9+):
 - **Windows** — `winget install Swift.Toolchain`, then `swift build -c release`.
 
 There is no Xcode-project or Makefile to manage — open `Package.swift` directly
-in Xcode if you want an IDE. Continuous integration builds and tests on all three
-operating systems (see `.github/workflows/ci.yml`); tagging a commit
-`xrnsdaw-v*` publishes prebuilt binaries for each OS to a GitHub Release.
+in Xcode if you want an IDE. Continuous integration builds and tests on **macOS
+and Linux** (see `.github/workflows/ci.yml`); tagging a commit `xrnsdaw-v*`
+publishes prebuilt **macOS and Linux** binaries to a GitHub Release. *(Windows
+builds are currently blocked by a Swift-toolchain bug — a cyclic `ucrt` module via
+the VS/SDK intrinsics that breaks importing any C module; the source is portable,
+and Windows returns once the toolchain is fixed.)*
 
 ## Usage
 

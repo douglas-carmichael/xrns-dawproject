@@ -15,6 +15,11 @@ jobs:
   build-test:
     name: Build & test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # Windows is non-blocking: Swift's C-interop on Windows currently hits a
+    # toolchain bug (cyclic 'ucrt' module via VS/SDK intrinsics) that breaks
+    # importing any C module. The source is portable; releases are macOS + Linux
+    # until the toolchain is fixed, so a red Windows build mustn't fail the run.
+    continue-on-error: ${{ matrix.os == 'windows-2022' }}
     strategy:
       fail-fast: false
       matrix:
@@ -58,10 +63,8 @@ jobs:
             asset: xrnsdaw-linux-x86_64
             static: "--static-swift-stdlib"
             swift: "6.0"
-          - os: windows-2022
-            asset: xrnsdaw-windows-x86_64
-            static: ""
-            swift: "5.10"
+          # Windows omitted from releases until the Swift C-interop toolchain bug
+          # (cyclic 'ucrt' module) is resolved; macOS + Linux ship as v1.0.
     steps:
       - uses: actions/checkout@v4
       - uses: SwiftyLab/setup-swift@latest
