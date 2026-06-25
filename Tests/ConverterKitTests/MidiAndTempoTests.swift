@@ -30,7 +30,9 @@ final class MidiTests: XCTestCase {
         XCTAssertEqual(notes.map { $0.key }, [60, 64, 67])
         XCTAssertEqual(notes[1].start, 1.0, accuracy: 1e-3)
         XCTAssertEqual(notes[1].length, 2.0, accuracy: 1e-3)
-        XCTAssertEqual(notes[2].velocity, 0.75, accuracy: 0.01)
+        // Velocity survives the perceptual sqrt curve (write) / square (read) round
+        // trip to within one 7-bit MIDI step of the nonlinear quantization.
+        XCTAssertEqual(notes[2].velocity, 0.75, accuracy: 0.02)
         XCTAssertEqual(back.title, "Demo")
     }
 

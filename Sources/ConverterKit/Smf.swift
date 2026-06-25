@@ -64,9 +64,11 @@ enum Smf {
                         pending[id, default: []].append((tick, vel))
                     } else if var q = pending[id], !q.isEmpty {
                         let on = q.removeFirst(); pending[id] = q
+                        // Invert the writer's perceptual curve: velocity → linear amplitude.
+                        let amp = Double(on.vel) / 127.0
                         notes.append(IRNote(start: Double(on.tick) / ppq,
                                             length: max(1.0 / ppq, Double(tick - on.tick) / ppq),
-                                            key: key, velocity: Double(on.vel) / 127.0))
+                                            key: key, velocity: amp * amp))
                     }
                 case 0xA0, 0xB0, 0xE0: r.skip(2)                 // poly-AT / CC / pitch-bend
                 case 0xC0, 0xD0: r.skip(1)                       // program / channel pressure
@@ -151,7 +153,12 @@ enum Smf {
                 let on = ticks(n.start)
                 let off = max(on + 1, ticks(n.start + n.length))
                 let key = UInt8(clamping: n.key)
-                let vel = UInt8(min(127, max(1, Int((n.velocity * 127).rounded()))))
+                // Linear amplitude → MIDI velocity through a square-root (perceptual)
+                // curve: tracker/Renoise volume is linear, but MIDI velocity reads as
+                // loudness, so a flat scaling makes soft notes vanish. This matches
+                // Awave Studio's module→MIDI velocities; the reader squares it back.
+                let amp = max(0.0, min(1.0, n.velocity))
+                let vel = UInt8(min(127, max(1, Int(amp.squareRoot() * 127))))
                 events.append(Event(on, [0x90, key, vel]))
                 events.append(Event(off, [0x80, key, 0]))
             }
