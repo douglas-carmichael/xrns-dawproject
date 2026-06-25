@@ -23,12 +23,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Per-OS Swift pin. macOS/Linux use 6.0. Windows uses 5.10 + windows-2022:
-        # Swift 6.0.x on Windows has a C-interop toolchain bug ("cyclic dependency
-        # in module 'ucrt' -> _Builtin_intrinsics -> ucrt") that breaks importing
-        # any C module, and windows-latest's VS2025 SDK compounds it.
+        # Per-OS Swift + runner pin. macOS/Linux use Swift 6.0. macOS pins to
+        # macos-15: macos-latest drifted to the macOS 26 image (Xcode 26.5 / the
+        # MacOSX26.5 SDK), whose module map the setup-swift 6.0.3 toolchain's clang
+        # headers can't build ("could not build Objective-C module '_Builtin_float'").
+        # Pinning the image keeps the toolchain and SDK in step. Windows uses 5.10 +
+        # windows-2022: Swift 6.0.x on Windows has a C-interop toolchain bug ("cyclic
+        # dependency in module 'ucrt' -> _Builtin_intrinsics -> ucrt") that breaks
+        # importing any C module, and windows-latest's VS2025 SDK compounds it.
         include:
-          - os: macos-latest
+          - os: macos-15
             swift: "6.0"
           - os: ubuntu-latest
             swift: "6.0"
@@ -55,7 +59,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
+          - os: macos-15
             asset: xrnsdaw-macos-arm64
             static: ""
             swift: "6.0"
