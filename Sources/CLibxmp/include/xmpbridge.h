@@ -47,6 +47,7 @@ int xmpb_map_ins(const struct xmp_module *m, int i, int key);    /* subinstrumen
 int xmpb_sub_sid_at(const struct xmp_module *m, int i, int sub); /* sample id of a subinstrument, -1 if invalid */
 int xmpb_sub_xpo_at(const struct xmp_module *m, int i, int sub); /* transpose of a subinstrument */
 int xmpb_sub_vol_at(const struct xmp_module *m, int i, int sub); /* subinstrument (sample) volume 0..64 */
+int xmpb_sub_gvl_at(const struct xmp_module *m, int i, int sub); /* subinstrument (sample) global volume; defaults to volbase, so clamp to 64 before use */
 int xmpb_sub_fin_at(const struct xmp_module *m, int i, int sub); /* subinstrument finetune -128..127 (1/128 semitone) */
 const char *xmpb_smp_name(const struct xmp_module *m, int s);    /* sample name */
 

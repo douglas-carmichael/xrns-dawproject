@@ -151,7 +151,12 @@ enum Xmp {
 
             // Primary sample (subinstrument 0) → the instrument's top-level fields,
             // used by the flattening IR path and by single-sample output.
-            inst.volume = Double(xmpb_sub_vol_at(modP, Int32(i), 0)) / 64.0
+            // Effective volume = default volume × the sample's global volume (IT/GDM
+            // carry a separate per-sample gvl). gvl defaults to volbase — which is >64
+            // on a few formats — so clamp to 64, where it means "no scaling".
+            let primVol = Double(xmpb_sub_vol_at(modP, Int32(i), 0)) / 64.0
+            let primGvl = Double(min(Int32(64), xmpb_sub_gvl_at(modP, Int32(i), 0))) / 64.0
+            inst.volume = primVol * primGvl
             inst.finetune = max(-127, min(127, Int(xmpb_sub_fin_at(modP, Int32(i), 0))))
             if let prim = loadSample(Int(xmpb_sub_sid(modP, Int32(i)))) {
                 inst.sampleFrames = prim.pcm.count / max(1, prim.channels)
@@ -170,7 +175,9 @@ enum Xmp {
                 func emit(_ sub: Int, _ from: Int, _ to: Int) {
                     guard var s = loadSample(Int(xmpb_sub_sid_at(modP, Int32(i), Int32(sub)))) else { return }
                     s.transpose = Int(xmpb_sub_xpo_at(modP, Int32(i), Int32(sub)))
-                    s.volume = Double(xmpb_sub_vol_at(modP, Int32(i), Int32(sub))) / 64.0
+                    let kzVol = Double(xmpb_sub_vol_at(modP, Int32(i), Int32(sub))) / 64.0
+                    let kzGvl = Double(min(Int32(64), xmpb_sub_gvl_at(modP, Int32(i), Int32(sub)))) / 64.0
+                    s.volume = kzVol * kzGvl
                     s.finetune = max(-127, min(127, Int(xmpb_sub_fin_at(modP, Int32(i), Int32(sub)))))
                     s.noteStart = from; s.noteEnd = to
                     samples.append(s)

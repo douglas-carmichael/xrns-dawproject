@@ -29,6 +29,9 @@ int xmpb_sub_xpo_at(const struct xmp_module *m, int i, int sub) {
 int xmpb_sub_vol_at(const struct xmp_module *m, int i, int sub) {
 	return (sub >= 0 && sub < m->xxi[i].nsm) ? m->xxi[i].sub[sub].vol : 64;
 }
+int xmpb_sub_gvl_at(const struct xmp_module *m, int i, int sub) {
+	return (sub >= 0 && sub < m->xxi[i].nsm) ? m->xxi[i].sub[sub].gvl : 64;
+}
 int xmpb_sub_fin_at(const struct xmp_module *m, int i, int sub) {
 	return (sub >= 0 && sub < m->xxi[i].nsm) ? m->xxi[i].sub[sub].fin : 0;
 }
