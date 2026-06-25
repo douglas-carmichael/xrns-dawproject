@@ -1,5 +1,7 @@
 #include "xmpbridge.h"
 #include "effects.h"
+#include "common.h"   /* struct context_data / module_data and QUIRK_* flags */
+#include "med_extras.h"   /* MED synth instrument extras (volume sequence) */
 
 const char *xmpb_mod_name(const struct xmp_module *m) { return m->name; }
 const char *xmpb_mod_type(const struct xmp_module *m) { return m->type; }
@@ -43,6 +45,19 @@ int xmpb_smp_lpe(const struct xmp_module *m, int s) { return m->xxs[s].lpe; }
 int xmpb_smp_flg(const struct xmp_module *m, int s) { return m->xxs[s].flg; }
 const unsigned char *xmpb_smp_data(const struct xmp_module *m, int s) { return m->xxs[s].data; }
 int xmpb_chn_pan(const struct xmp_module *m, int ch) { return m->xxc[ch].pan; }
+
+int xmpb_quirk_vsall(xmp_context c) {
+	struct context_data *ctx = (struct context_data *)c;
+	return (ctx->m.quirk & QUIRK_VSALL) ? 1 : 0;
+}
+
+int xmpb_med_synth_vtlen(const struct xmp_module *m, int i) {
+	struct med_instrument_extras *ie;
+	if (i < 0 || i >= m->ins) return 0;
+	ie = MED_INSTRUMENT_EXTRAS(m->xxi[i]);
+	if (ie == NULL || ie->magic != MED_EXTRAS_MAGIC) return 0;
+	return ie->vtlen;
+}
 
 int xmpb_env_flg(const struct xmp_module *m, int i) { return m->xxi[i].aei.flg; }
 int xmpb_env_npt(const struct xmp_module *m, int i) { return m->xxi[i].aei.npt; }

@@ -88,8 +88,9 @@ public enum Verify {
         var qmem = [Int](repeating: 0, count: m.channels)   // Qxy retrigger param memory
         var curInst = [Int](repeating: -1, count: m.channels)
         var curSpeed = speed   // ticks/row, tracked through mid-song speed changes
-        var div: [(pat: Int, row: Int, ch: Int, mine: Int, lib: Int, myNote: Int, libNote: Int)] = []
+        var div: [(pat: Int, row: Int, ch: Int, mine: Int, lib: Int, myNote: Int, libNote: Int, f1: Int, p1: Int, f2: Int, p2: Int, vc: Int)] = []
         var envCells = 0    // active cells on enveloped instruments — volume is envelope-driven, not model-checkable
+        var synthCells = 0  // active cells on MED synth instruments — level is voltbl-driven (a known unmodeled gap)
         var gv = 64, gvSlide = 0, gvCells = 0   // global volume (0…64) and cells it explains
         for f in frames where f.pattern >= 0 && f.pattern < m.patterns.count {
             if f.newSection {   // libxmp restarts every channel at a sub-song boundary
@@ -110,6 +111,9 @@ public enum Verify {
                         if up > 0 { gvSlide = up * curSpeed } else if dn > 0 { gvSlide = -dn * curSpeed } }
                 }
             }
+            // Per-row regular-slide step: ticks 1…speed-1, or all `speed` ticks for
+            // ST3.00 S3M (QUIRK_VSALL). Fine slides ignore this (one step on tick 0).
+            let slideTicks = m.volSlideAllTicks ? curSpeed : max(0, curSpeed - 1)
             for ch in 0..<m.channels where ch < pat[f.row].count {
                 let cell = pat[f.row][ch]
                 // A note delay (Sxy with x=D → libxmp FX_EXTENDED / EX_DELAY) defers the
@@ -122,6 +126,7 @@ public enum Verify {
                 if let i = cell.instrument { curInst[ch] = i - 1 }           // libxmp ev.ins is 1-based
                 let ins = curInst[ch], valid = ins >= 0 && ins < m.instruments.count
                 let enveloped = valid && m.instruments[ins].envelope != nil
+                let synthVol = valid && m.instruments[ins].synthVolume
                 // An instrument with no audio (a macro/placeholder the song still
                 // triggers) makes no sound; libxmp reports a phantom channel volume for
                 // it, so don't compare. Both our output and Renoise's leave it empty.
@@ -156,7 +161,14 @@ public enum Verify {
                     let keepVol = cell.instrument == nil && wasActive
                     if let v = cell.volume { cur[ch] = v - 1 }
                     else if !keepVol { cur[ch] = sdef }
-                } else if cell.instrument != nil { if active[ch] { cur[ch] = sdef } }  // instrument-only row resets volume
+                } else if cell.instrument != nil {
+                    // Instrument number with no note: the volume column still wins. A bare
+                    // sample number reloads the sample default in the ScreamTracker/Fast-
+                    // Tracker/Impulse lineage (S3M/XM/IT), but OctaMED (MED) latches it
+                    // without resetting the running volume — so a held fade keeps fading.
+                    if let v = cell.volume { cur[ch] = v - 1 }
+                    else if active[ch] && m.format != "MED" { cur[ch] = sdef }
+                }
                 else if let v = cell.volume { cur[ch] = v - 1 }
                 if cell.fx1Type == 0x0C { active[ch] = true; cur[ch] = min(64, cell.fx1Param) }   // Cxx set volume
                 // Volume slide (Axy / Dxy). Fine slides apply on tick 0, so they change
@@ -172,11 +184,19 @@ public enum Verify {
                     var p = cell.fx1Param
                     if p != 0 { mem[ch] = p } else { p = mem[ch] }
                     let up = p >> 4, dn = p & 0x0F
-                    if fineFmt && dn == 0xF && up != 0 { cur[ch] = min(64, cur[ch] + up) }
-                    else if fineFmt && up == 0xF && dn != 0 { cur[ch] = max(0, cur[ch] - dn) }
-                    else if m.format == "S3M" && up > 0 && dn > 0 { regSlide = -dn * curSpeed }  // ST3 priority-down (QUIRK_VOLPDN)
-                    else if up > 0 { regSlide = up * curSpeed }
-                    else if dn > 0 { regSlide = -dn * curSpeed }
+                    if fineFmt && dn == 0xF && up != 0 { cur[ch] = min(64, cur[ch] + up) }       // DxF fine up
+                    else if fineFmt && up == 0xF && dn != 0 { cur[ch] = max(0, cur[ch] - dn) }   // DFy fine down
+                    // ST3/IT quirk: one nibble F and the other 0 is still a fine slide —
+                    // D0F = fine down 15, DF0 = fine up 15 (libxmp effects.c FINE_VOLS).
+                    else if fineFmt && dn == 0xF { cur[ch] = max(0, cur[ch] - 15) }              // D0F (up==0)
+                    else if fineFmt && up == 0xF { cur[ch] = min(64, cur[ch] + 15) }             // DF0 (dn==0)
+                    // Regular slides step on ticks 1…speed-1 (not tick 0): a row moves
+                    // the volume by amount*(speed-1). ST3.00 S3M (QUIRK_VSALL) slides on
+                    // every tick → amount*speed. libxmp is sampled at tick 0, so the
+                    // deferred regSlide below lands on the next row's frame 0.
+                    else if m.format == "S3M" && up > 0 && dn > 0 { regSlide = -dn * slideTicks }  // ST3 priority-down (QUIRK_VOLPDN)
+                    else if up > 0 { regSlide = up * slideTicks }
+                    else if dn > 0 { regSlide = -dn * slideTicks }
                 }
                 // Qxy retrigger volume change, modelled to match the converter's fade
                 // approximation (0I/0O ≈ amt per tick): the same amt-per-tick slide.
@@ -193,30 +213,58 @@ public enum Verify {
                     }
                     if x >= 9 { regSlide = amt * curSpeed } else if x != 0 && x != 8 { regSlide = -amt * curSpeed }
                 }
+                // Volume-column slides + effect-column fine volume slides (see
+                // Tracker.applyVol). XM/IT carry volume-column slides in the secondary
+                // effect: FX_VOLSLIDE_2 / FX_VSLIDE_*_2 (regular), FX_EXTENDED+
+                // EX_F_VSLIDE / FX_F_VSLIDE_*_2 (fine). EAx/EBx fine slides ride the
+                // effect column as FX_EXTENDED. Fine slides land on tick 0 (apply to
+                // cur now, before compare); regular slides apply on ticks 1+ (defer).
+                if active[ch] {
+                    for (t, pr) in [(cell.fx1Type, cell.fx1Param), (cell.fx2Type, cell.fx2Param)] {
+                        switch t {
+                        case 0xA4:                                          // XM FX_VOLSLIDE_2 regular
+                            let up = pr >> 4, dn = pr & 0x0F
+                            if up > 0 { regSlide += up * slideTicks } else if dn > 0 { regSlide -= dn * slideTicks }
+                        case 0xC0: regSlide += pr * slideTicks             // IT FX_VSLIDE_UP_2 regular
+                        case 0xC1: regSlide -= pr * slideTicks             // IT FX_VSLIDE_DN_2 regular
+                        case 0x0E:                                          // FX_EXTENDED EAx/EBx fine vol slide (tick 0)
+                            let sub = pr >> 4, amt = pr & 0x0F
+                            if sub == 0x0A { cur[ch] = min(64, cur[ch] + amt) }
+                            else if sub == 0x0B { cur[ch] = max(0, cur[ch] - amt) }
+                        case 0xC2: cur[ch] = min(64, cur[ch] + pr)        // IT FX_F_VSLIDE_UP_2 fine
+                        case 0xC3: cur[ch] = max(0, cur[ch] - pr)         // IT FX_F_VSLIDE_DN_2 fine
+                        default: break
+                        }
+                    }
+                }
                 let mine = active[ch] ? cur[ch] : 0
                 let lib = Int((Double(f.vol[ch]) * scale).rounded())
                 if lib >= 6 && hasAudio && !noteDelay {
                     if enveloped { envCells += 1 }      // envelope drives the level (exported to Renoise as-is); model can't check
+                    else if synthVol { synthCells += 1 } // MED synth volume sequence — not modeled (known gap)
                     else if abs(mine - lib) > threshold {
                         let mineGv = Int((Double(mine) * Double(gv) / 64.0).rounded())
                         if gv < 64 && abs(mineGv - lib) <= threshold { gvCells += 1 }   // explained by global volume (not emitted — Renoise-importer parity)
-                        else { div.append((f.pattern, f.row, ch, mine, lib, cell.note ?? -1, ch < f.note.count ? f.note[ch] : -1)) }
+                        else { div.append((f.pattern, f.row, ch, mine, lib, cell.note ?? -1, ch < f.note.count ? f.note[ch] : -1, cell.fx1Type, cell.fx1Param, cell.fx2Type, cell.fx2Param, cell.volume ?? -1)) }
                     }
                 }
                 if regSlide != 0 { cur[ch] = max(0, min(64, cur[ch] + regSlide)) }   // takes effect from the next row
             }
         }
         let cells = frames.count * m.channels
-        print("verify \(URL(fileURLWithPath: path).lastPathComponent): \(m.format) \(m.channels)ch, \(frames.count) rows captured, libxmp volmax=\(maxLib)")
-        let checked = cells - envCells
+        print("verify \(URL(fileURLWithPath: path).lastPathComponent): \(m.format) \(m.channels)ch, \(frames.count) rows captured, libxmp volmax=\(maxLib)\(ProcessInfo.processInfo.environment["XRNSDAW_VERIFY_DEBUG"] != nil ? " speed=\(speed)" : "")")
+        let checked = cells - envCells - synthCells
         print("  volume divergences > \(threshold)/64: \(div.count) of \(checked) checked cells (\(checked > 0 ? div.count * 100 / checked : 0)%)")
         if envCells > 0 { print("    (\(envCells) enveloped-instrument cells skipped — level is envelope-driven and exported to Renoise unchanged)") }
+        if synthCells > 0 { print("    (\(synthCells) MED synth-instrument cells skipped — level is volume-sequence-driven, not yet modeled)") }
         if gvCells > 0 { print("    (\(gvCells) cells explained by global volume — not emitted, matching Renoise's own importer)") }
         let byPat = Dictionary(grouping: div, by: { $0.pat }).mapValues { $0.count }.sorted { $0.value > $1.value }
         for (pat, cnt) in byPat.prefix(12) { print("    pattern \(pat): \(cnt) divergent cells") }
         print("  worst cells (mine vs libxmp):")
-        for d in div.sorted(by: { abs($0.mine - $0.lib) > abs($1.mine - $1.lib) }).prefix(15) {
-            print("    pat\(d.pat) row\(d.row) ch\(d.ch): mine=\(d.mine) libxmp=\(d.lib)  (myNote=\(d.myNote) libNote=\(d.libNote))")
+        let dbg = ProcessInfo.processInfo.environment["XRNSDAW_VERIFY_DEBUG"] != nil
+        for d in div.sorted(by: { abs($0.mine - $0.lib) > abs($1.mine - $1.lib) }).prefix(dbg ? 40 : 15) {
+            let fx = dbg ? String(format: "  fx1=%02X/%02X fx2=%02X/%02X vc=%d", d.f1, d.p1, d.f2, d.p2, d.vc) : ""
+            print("    pat\(d.pat) row\(d.row) ch\(d.ch): mine=\(d.mine) libxmp=\(d.lib)  (myNote=\(d.myNote) libNote=\(d.libNote))\(fx)")
         }
     }
 }

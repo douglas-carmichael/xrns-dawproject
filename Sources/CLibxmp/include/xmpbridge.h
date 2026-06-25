@@ -59,6 +59,17 @@ const unsigned char *xmpb_smp_data(const struct xmp_module *m, int s);
 
 int xmpb_chn_pan(const struct xmp_module *m, int ch);   /* channel pan 0..255 (128 = centre) */
 
+/* QUIRK_VSALL: ST3.00-style S3M volume slides step on every tick including tick 0
+ * (amount*speed per row); without it they skip tick 0 (amount*(speed-1)). Set per
+ * module from the S3M header, so the converter must read it to pick the slide step. */
+int xmpb_quirk_vsall(xmp_context c);
+
+/* MED synth/hybrid instruments drive their level from a per-instrument volume
+ * sequence (the "volume table"), not a flat sample volume. Returns the volume-table
+ * length (>0 for a synth instrument), 0 otherwise — used to flag cells whose level
+ * the converter can't reproduce from a single velocity. */
+int xmpb_med_synth_vtlen(const struct xmp_module *m, int i);
+
 /* Instrument volume envelope (aei): flags (bit0 = on, bit1 = has sustain),
  * point count, sustain-point index, and per-point time (ticks) / value (0..64). */
 int xmpb_env_flg(const struct xmp_module *m, int i);

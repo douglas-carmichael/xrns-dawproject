@@ -50,6 +50,7 @@ enum Xmp {
         m.channelPans = (0..<m.channels).map { Double(xmpb_chn_pan(modP, Int32($0))) / 255.0 }
         m.initialTempoBPM = (mod.bpm >= 32 ? Double(mod.bpm) : 125) * timeScale
         m.initialSpeed = max(1, Int(mod.spd))
+        m.volSlideAllTicks = xmpb_quirk_vsall(ctx) != 0   // ST3.00 S3M: slides step on every tick (incl. tick 0)
         // Walk the order list. 0xFE ("+++") is a skip; 0xFF ("---") normally marks
         // the song end. But some S3M/IT files pack several sub-songs separated by
         // 0xFF — 2nd_skav (Second Reality) holds BOTH the intro and the ending that
@@ -148,6 +149,7 @@ enum Xmp {
             default: inst.newNoteAction = "NoteOff"         // OFF / FADE (Renoise has no sample-level fade)
             }
             inst.envelope = envelopeADSR(modP, i)           // XM/IT/AM-synth volume envelope → AHDSR
+            inst.synthVolume = xmpb_med_synth_vtlen(modP, Int32(i)) > 0   // MED synth volume-sequence instrument
 
             // Primary sample (subinstrument 0) → the instrument's top-level fields,
             // used by the flattening IR path and by single-sample output.

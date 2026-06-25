@@ -77,6 +77,10 @@ struct TInstrument {
     var channels: Int = 1
     var volume: Double = 1.0    // sample default volume, 0…1 (instrument volume / 64)
     var finetune: Int = 0       // Renoise finetune −127…127 (from libxmp sub.fin)
+    /// MED synth/hybrid instrument whose level is driven by a per-instrument volume
+    /// sequence (the "volume table"), not a flat sample volume — the converter can't
+    /// reproduce that from a single velocity, so verify treats it like an envelope.
+    var synthVolume: Bool = false
     /// New Note Action mapped to Renoise's vocabulary: Cut / NoteOff / None.
     var newNoteAction: String = "NoteOff"
     /// Volume envelope reduced to AHDSR (XM/IT envelope, or AM-synth amplitude
@@ -102,6 +106,7 @@ struct TrackerModule {
     var order: [Int] = []               // pattern indices, in play order
     var patterns: [[[TCell]]] = []      // [pattern][row][channel]
     var channelPans: [Double] = []      // per-channel pan 0…1 (0.5 = centre); Amiga LRRL etc.
+    var volSlideAllTicks: Bool = false  // ST3 QUIRK_VSALL: volume slides step on every tick (incl. tick 0)
 }
 
 /// How a module's notes are laid out across IR tracks.
@@ -187,7 +192,10 @@ enum Tracker {
         // value. A note's velocity is this running volume — not a flat maximum — so
         // dynamics survive (matching Awave's MOD→MIDI velocities).
         func applyTriggerVol(_ cell: TCell, _ vol: inout Int) {
-            if let i2 = cell.instrument { vol = defaultVol64(i2) }
+            // A sample number reloads the sample default — but OctaMED (MED) latches a
+            // bare sample number (no note) without resetting the running volume, so a
+            // held fade keeps fading. Other formats reset on the instrument number.
+            if let i2 = cell.instrument, cell.note != nil || m.format != "MED" { vol = defaultVol64(i2) }
             if let vc = cell.volume { vol = min(64, max(0, vc - 1)) }
             if cell.fx1Type == 0x0C { vol = min(64, max(0, cell.fx1Param)) }
         }
@@ -304,16 +312,23 @@ enum Tracker {
         var volCurve = [[(Double, Double)]](repeating: [], count: m.channels)
         do {
             func applyVol(_ cell: TCell, _ v: inout Int, _ vmem: inout Int, _ qmem: inout Int, _ spd: Int) {
+                // Regular slides step on ticks 1…speed-1 (not tick 0), so a row moves
+                // the volume by amount*(speed-1). ST3.00-style S3M (QUIRK_VSALL) slides
+                // on every tick including tick 0 → amount*speed. Fine slides step once.
+                let st = m.volSlideAllTicks ? spd : max(0, spd - 1)
+                let fineFmt = (m.format == "IT" || m.format == "S3M")   // only ST3/IT do fine slides via Dxy
                 switch cell.fx1Type {
                 case 0x0C: v = min(64, max(0, cell.fx1Param))               // Cxx set volume
                 case 0x0A:                                                  // Dxy/Axy volume slide
                     var p = cell.fx1Param; if p != 0 { vmem = p } else { p = vmem }
                     let up = p >> 4, dn = p & 0x0F
-                    if up == 0xF && dn != 0 { v = max(0, v - dn) }          // DFy fine down
-                    else if dn == 0xF && up != 0 { v = min(64, v + up) }    // DxF fine up
-                    else if m.format == "S3M" && up > 0 && dn > 0 { v = max(0, v - dn * spd) }  // ST3 priority-down (Dxy both set)
-                    else if up > 0 { v = min(64, v + up * spd) }
-                    else if dn > 0 { v = max(0, v - dn * spd) }
+                    if fineFmt && dn == 0xF && up != 0 { v = min(64, v + up) }       // DxF fine up
+                    else if fineFmt && up == 0xF && dn != 0 { v = max(0, v - dn) }   // DFy fine down
+                    else if fineFmt && dn == 0xF { v = max(0, v - 15) }             // D0F → fine down 15 (up==0)
+                    else if fineFmt && up == 0xF { v = min(64, v + 15) }            // DF0 → fine up 15 (dn==0)
+                    else if m.format == "S3M" && up > 0 && dn > 0 { v = max(0, v - dn * st) }  // ST3 priority-down (Dxy both set)
+                    else if up > 0 { v = min(64, v + up * st) }
+                    else if dn > 0 { v = max(0, v - dn * st) }
                 case 0x1B:                                                  // Qxy retrigger volume change → fade
                     var p = cell.fx1Param; if p != 0 { qmem = p } else { p = qmem }
                     let x = p >> 4
@@ -322,6 +337,30 @@ enum Tracker {
                                case 4, 0xC: amt = 8; case 5, 0xD: amt = 16
                                case 6, 0xE: amt = 8; case 7, 0xF: amt = 16; default: amt = 0 }
                     if x >= 9 { v = min(64, v + amt * spd) } else if x != 0 && x != 8 { v = max(0, v - amt * spd) }
+                case 0x0E:                                                  // Exy extended: EAx/EBx fine volume slide
+                    let sub = cell.fx1Param >> 4, amt = cell.fx1Param & 0x0F
+                    if sub == 0x0A { v = min(64, v + amt) }                 // EAx fine vol up
+                    else if sub == 0x0B { v = max(0, v - amt) }             // EBx fine vol down
+                default: break
+                }
+                // Volume-column volume slides. XM/IT put these in the secondary
+                // column (libxmp moves the volume byte there): XM FX_VOLSLIDE_2
+                // (regular, up hi-nibble / dn lo-nibble) and FX_EXTENDED +
+                // EX_F_VSLIDE_UP/DN (fine); IT FX_VSLIDE_UP_2/DN_2 (regular) and
+                // FX_F_VSLIDE_UP_2/DN_2 (fine, amount direct). Without this a
+                // volume-column fade-in/out is dropped from the note's dynamics.
+                switch cell.fx2Type {
+                case 0xA4:                                              // XM FX_VOLSLIDE_2 regular
+                    let up = cell.fx2Param >> 4, dn = cell.fx2Param & 0x0F
+                    if up > 0 { v = min(64, v + up * st) } else if dn > 0 { v = max(0, v - dn * st) }
+                case 0xC0: v = min(64, v + cell.fx2Param * st)         // IT FX_VSLIDE_UP_2 regular
+                case 0xC1: v = max(0, v - cell.fx2Param * st)         // IT FX_VSLIDE_DN_2 regular
+                case 0x0E:                                              // XM FX_EXTENDED fine vol slide
+                    let sub = cell.fx2Param >> 4, amt = cell.fx2Param & 0x0F
+                    if sub == 0x0A { v = min(64, v + amt) }            // EX_F_VSLIDE_UP
+                    else if sub == 0x0B { v = max(0, v - amt) }        // EX_F_VSLIDE_DN
+                case 0xC2: v = min(64, v + cell.fx2Param)              // IT FX_F_VSLIDE_UP_2 fine
+                case 0xC3: v = max(0, v - cell.fx2Param)              // IT FX_F_VSLIDE_DN_2 fine
                 default: break
                 }
             }
