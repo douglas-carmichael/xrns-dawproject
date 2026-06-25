@@ -149,6 +149,11 @@ enum Smf {
         // One MTrk per note track (channel 0).
         for t in noteTracks {
             var events: [Event] = [Event(0, meta(0x03, Array(t.name.utf8)))]
+            // Channel pan (CC10) — the track's stereo position (e.g. an Amiga LRRL
+            // channel). 0…1 → 0…127, 64 = centre. One event at the start of the track.
+            let pan = UInt8(min(127, max(0, Int((t.pan * 127).rounded()))))
+            events.append(Event(0, [0xB0, 10, pan]))
+            var exprDirty = false   // CC11 left below full by a prior note's fade
             for n in t.absoluteNotes {
                 let on = ticks(n.start)
                 let off = max(on + 1, ticks(n.start + n.length))
@@ -157,8 +162,27 @@ enum Smf {
                 // curve: tracker/Renoise volume is linear, but MIDI velocity reads as
                 // loudness, so a flat scaling makes soft notes vanish. This matches
                 // Awave Studio's module→MIDI velocities; the reader squares it back.
-                let amp = max(0.0, min(1.0, n.velocity))
+                // For a note with within-note dynamics, anchor the velocity at the
+                // curve's PEAK and ride CC11 down from it, so the expression only ever
+                // attenuates (0…127) — the standard MIDI velocity×expression model.
+                let peak = max(n.velocity, n.expression.map { $0.value }.max() ?? 0)
+                let amp = max(0.0, min(1.0, n.expression.isEmpty ? n.velocity : peak))
                 let vel = UInt8(min(127, max(1, Int(amp.squareRoot() * 127))))
+                // Within-note volume movement → CC11 (expression), as a linear fraction
+                // of the note's peak. Mirrors the dawproject CC11 curve; per-channel CC
+                // is exact for the monophonic channel layout (overlapping notes in the
+                // instrument layout share the channel). A flat note following a faded one
+                // restores CC11 to full at its OWN note-on (not the prior note-off, so a
+                // synth's release tail keeps the faded level instead of blipping loud).
+                if n.expression.isEmpty {
+                    if exprDirty { events.append(Event(on, [0xB0, 11, 127])); exprDirty = false }
+                } else if peak > 0 {
+                    for e in n.expression {
+                        let frac = max(0.0, min(1.0, e.value / peak))
+                        events.append(Event(ticks(n.start + e.time), [0xB0, 11, UInt8((frac * 127).rounded())]))
+                    }
+                    exprDirty = (n.expression.last.map { $0.value / peak } ?? 1.0) < 0.999
+                }
                 events.append(Event(on, [0x90, key, vel]))
                 events.append(Event(off, [0x80, key, 0]))
             }

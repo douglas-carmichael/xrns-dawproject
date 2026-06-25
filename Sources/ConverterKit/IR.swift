@@ -150,7 +150,8 @@ struct IRTrack {
             for n in clip.notes {
                 out.append(IRNote(start: clip.start + n.start, length: n.length,
                                   key: n.key, velocity: n.velocity,
-                                  sampleOffset: n.sampleOffset, instrument: n.instrument))
+                                  sampleOffset: n.sampleOffset, instrument: n.instrument,
+                                  expression: n.expression))
             }
         }
         return out.sorted { $0.start < $1.start }
