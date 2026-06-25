@@ -41,20 +41,22 @@ public enum Verify {
         var out: [(Int, Int, [Int], [Int], Bool)] = []
         for (si, sec) in sections.enumerated() {
             if si > 0 { _ = xmpb_set_position(ctx, Int32(sec.start)) }
-            var guardN = 0, lastKey = -1, entered = false, firstRow = true, lastPos = -1
+            var guardN = 0, entered = false, firstRow = true
+            var visited = Set<Int>()                         // (order pos, row) captured this section
             while xmpb_play_frame(ctx) == 0 {
                 guardN += 1; if guardN > 1_000_000 { break }
                 let pos = Int(xmpb_fi_pos())
-                if pos >= sec.start && pos < sec.end {
-                    if entered && pos < lastPos { break }   // looped back to the section start → one pass done
-                    entered = true; lastPos = pos
-                } else if entered { break }                  // advanced past the section (hit the 0xFF) → done
+                if pos >= sec.start && pos < sec.end { entered = true }
+                else if entered { break }                    // advanced past the section (hit the 0xFF) → done
                 else { continue }                            // still settling after the seek
                 if xmpb_fi_frame() != 0 { continue }         // sample at the first tick of each row
                 let pat = Int(xmpb_fi_pattern()), row = Int(xmpb_fi_row())
-                let key = pat * 4096 + row
-                if key == lastKey { continue }               // one sample per row, but keep repeats in order
-                lastKey = key
+                // Capture exactly one pass: stop as soon as a playback position (order
+                // pos + row) repeats. This catches a song-end restart, a Bxx position
+                // jump and an SBx pattern loop alike. Without it a module that loops
+                // internally (keeping pos constant or jumping forward) replays a section
+                // up to the frame guard — 100k+ rows — and wildly inflates the counts.
+                if !visited.insert(pos * 4096 + row).inserted { break }
                 var v = [Int](repeating: 0, count: channels), n = [Int](repeating: -1, count: channels)
                 for ch in 0..<channels { v[ch] = Int(xmpb_fi_chvol(Int32(ch))); n[ch] = Int(xmpb_fi_chnote(Int32(ch))) }
                 out.append((pat, row, v, n, firstRow))
@@ -110,6 +112,13 @@ public enum Verify {
             }
             for ch in 0..<m.channels where ch < pat[f.row].count {
                 let cell = pat[f.row][ch]
+                // A note delay (Sxy with x=D → libxmp FX_EXTENDED / EX_DELAY) defers the
+                // whole cell — note, instrument and volume column — to tick x. We sample
+                // at tick 0, so libxmp still shows the previous volume on this row; don't
+                // flag that transitional frame as a divergence (the value still carries
+                // forward for later rows). SD0 (delay 0) is immediate, so excluded.
+                let noteDelay = (cell.fx1Type == 0x0E && cell.fx1Param >> 4 == 0x0D && cell.fx1Param & 0x0F != 0)
+                             || (cell.fx2Type == 0x0E && cell.fx2Param >> 4 == 0x0D && cell.fx2Param & 0x0F != 0)
                 if let i = cell.instrument { curInst[ch] = i - 1 }           // libxmp ev.ins is 1-based
                 let ins = curInst[ch], valid = ins >= 0 && ins < m.instruments.count
                 let enveloped = valid && m.instruments[ins].envelope != nil
@@ -186,7 +195,7 @@ public enum Verify {
                 }
                 let mine = active[ch] ? cur[ch] : 0
                 let lib = Int((Double(f.vol[ch]) * scale).rounded())
-                if lib >= 6 && hasAudio {
+                if lib >= 6 && hasAudio && !noteDelay {
                     if enveloped { envCells += 1 }      // envelope drives the level (exported to Renoise as-is); model can't check
                     else if abs(mine - lib) > threshold {
                         let mineGv = Int((Double(mine) * Double(gv) / 64.0).rounded())
