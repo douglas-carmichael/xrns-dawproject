@@ -162,6 +162,7 @@ enum Tracker {
         var offsetsUsed: [Int: Set<Int>] = [:]
         var open = [Open?](repeating: nil, count: m.channels)
         var lastInstrument = [Int](repeating: 0, count: m.channels)
+        var chVol = [Int](repeating: 64, count: m.channels)   // running channel volume 0…64
         var curBPM = startBPM
         var curSpeed = startSpeed
         var tempoEvents = [IRTempoPoint(time: 0, bpm: musicalBPM(curBPM, curSpeed))]
@@ -172,6 +173,23 @@ enum Tracker {
                 note: IRNote(start: o.startBeat, length: length, key: o.key, velocity: o.velocity,
                              sampleOffset: o.offset > 0 ? o.offset : nil)))
             if o.offset > 0 { offsetsUsed[o.instrument, default: []].insert(o.offset) }
+        }
+
+        // An instrument's sample default volume, as a tracker 0…64 value.
+        func defaultVol64(_ inst: Int) -> Int {
+            guard inst >= 1, inst <= m.instruments.count else { return 64 }
+            return min(64, max(0, Int((m.instruments[inst - 1].volume * 64).rounded())))
+        }
+        // Update a channel's running volume (0…64) for the events on one cell, the
+        // way a tracker tracks loudness: an instrument number reloads the sample's
+        // default volume, an explicit volume column (libxmp stores it 1-based) or a
+        // Cxx set-volume overrides, and a bare note (no instrument) keeps the current
+        // value. A note's velocity is this running volume — not a flat maximum — so
+        // dynamics survive (matching Awave's MOD→MIDI velocities).
+        func applyTriggerVol(_ cell: TCell, _ vol: inout Int) {
+            if let i2 = cell.instrument { vol = defaultVol64(i2) }
+            if let vc = cell.volume { vol = min(64, max(0, vc - 1)) }
+            if cell.fx1Type == 0x0C { vol = min(64, max(0, cell.fx1Param)) }
         }
 
         // Resolve the actually-played row segments. Patterns can end early (pattern
@@ -257,6 +275,9 @@ enum Tracker {
                         tempoEvents.append(IRTempoPoint(time: rowBeat, bpm: musicalBPM(curBPM, curSpeed)))
                     }
                     if let inst = cell.instrument { lastInstrument[ch] = inst }
+                    // Track running volume on every cell (volume changes happen on
+                    // rows without a note too), so a bare note inherits it.
+                    applyTriggerVol(cell, &chVol[ch])
                     guard cell.note != nil || cell.noteOff else { continue }
 
                     if let o = open[ch] { close(o, channel: ch, at: rowBeat); open[ch] = nil }
@@ -265,7 +286,7 @@ enum Tracker {
                         let transpose = (inst >= 1 && inst <= m.instruments.count) ? m.instruments[inst - 1].transpose : 0
                         open[ch] = Open(startBeat: rowBeat,
                                         key: min(127, max(0, nv + transpose + 12)),
-                                        velocity: cell.volume.map { Double(min(64, max(0, $0))) / 64.0 } ?? 1.0,
+                                        velocity: Double(chVol[ch]) / 64.0,
                                         instrument: inst,
                                         offset: cell.sampleOffset ?? 0)
                     }
@@ -316,8 +337,8 @@ enum Tracker {
                     for ch in 0..<min(m.channels, row.count) {
                         let cell = row[ch]
                         if let sp = speedChange(cell) { spd = sp }
-                        if cell.note != nil { v[ch] = cell.volume.map { min(64, max(0, $0 - 1)) } ?? 64 }
-                        applyVol(cell, &v[ch], &vmem[ch], &qmem[ch], spd)
+                        applyTriggerVol(cell, &v[ch])   // instrument reload / volume column / Cxx (bare note inherits)
+                        applyVol(cell, &v[ch], &vmem[ch], &qmem[ch], spd)   // slides / retrigger swells
                         if v[ch] != lastRec[ch] { volCurve[ch].append((rowBeat, Double(v[ch]) / 64.0)); lastRec[ch] = v[ch] }
                     }
                 }
