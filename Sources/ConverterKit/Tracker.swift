@@ -416,7 +416,14 @@ enum Tracker {
             // One lane per *sound*; track == instrument, so notes need no explicit
             // instrument reference (the Renoise writer uses the track's index).
             for inst in notesByInstrument.keys.sorted() {
-                let notes = notesByInstrument[inst]!.sorted { $0.start < $1.start }
+                let merged = notesByInstrument[inst]!.sorted { $0.start < $1.start }
+                // Merging every channel that plays this sound onto one lane can stack
+                // the SAME pitch from two tracker channels at once. One keyboard key
+                // can't be held and re-struck simultaneously (and one MIDI channel
+                // can't represent it either), so fold each pitch back to a single
+                // struck-and-re-articulated line — a playable solo part, and identical
+                // note timing in the .dawproject and .mid exports.
+                let notes = collapseSamePitchOverlaps(merged)
                 let (name, comment) = describe(format: m.format, instrument: inst, info: info(inst),
                                                notes: notes, offsets: offsetsUsed[inst] ?? [])
                 var track = IRTrack(role: .regular, name: name, comment: comment)
@@ -512,6 +519,63 @@ enum Tracker {
         }
         parts.append("likely \(guess)")
         return (name, parts.joined(separator: "; "))
+    }
+
+    /// Fold a lane so no single pitch ever sounds twice at once — what a human
+    /// player (and a single MIDI channel) needs. The instrument layout merges every
+    /// tracker channel that plays a sound onto one lane, so a pitch doubled across
+    /// two channels arrives as overlapping same-key notes, which a keyboard can't
+    /// play: one key is either down or up. Per pitch, each distinct onset becomes one
+    /// struck note that rings until the next onset of that pitch (a re-strike ends
+    /// the previous sounding of the key); the LAST note of an overlapping group rings
+    /// to the group's latest release, so a long note re-articulated mid-ring keeps
+    /// its full tail instead of being cut short. A same-instant unison collapses to
+    /// one note (loudest strike, longest tail). Different pitches are untouched — real
+    /// chords stay polyphonic. `notes` must be sorted by start; within-note dynamics
+    /// past a note's new end are dropped.
+    private static func collapseSamePitchOverlaps(_ notes: [IRNote]) -> [IRNote] {
+        guard notes.count > 1 else { return notes }
+        var byKey: [Int: [IRNote]] = [:]
+        for n in notes { byKey[n.key, default: []].append(n) }
+
+        var out: [IRNote] = []
+        for group in byKey.values {
+            let g = group.sorted { $0.start < $1.start }
+            var i = 0
+            while i < g.count {
+                // Grow one overlap cluster: notes starting before its running union end.
+                var unionEnd = g[i].start + g[i].length
+                var j = i + 1
+                while j < g.count, g[j].start < unionEnd - 1e-9 {
+                    unionEnd = max(unionEnd, g[j].start + g[j].length)
+                    j += 1
+                }
+                // One struck note per distinct onset in the cluster; it ends at the
+                // next onset, or — for the last — at the cluster's union end.
+                var s = i
+                while s < j {
+                    let onset = g[s].start
+                    var rep = g[s]                                  // representative strike
+                    var maxVel = g[s].velocity
+                    var t = s + 1
+                    while t < j, g[t].start <= onset + 1e-9 {       // same instant: a unison
+                        if g[t].length > rep.length { rep = g[t] }  // keep the longest voice…
+                        maxVel = max(maxVel, g[t].velocity)         // …at the loudest strike
+                        t += 1
+                    }
+                    rep.velocity = maxVel
+                    let end = (t < j) ? g[t].start : unionEnd
+                    rep.length = max(1e-6, end - onset)
+                    if !rep.expression.isEmpty {
+                        rep.expression = rep.expression.filter { $0.time < rep.length - 1e-9 }
+                    }
+                    out.append(rep)
+                    s = t
+                }
+                i = j
+            }
+        }
+        return out.sorted { $0.start != $1.start ? $0.start < $1.start : $0.key < $1.key }
     }
 
     private static func maxConcurrency(_ notes: [IRNote]) -> Int {
